@@ -223,7 +223,7 @@ async function importMaterialDatabases(files) {
       return existing && materialContentDiffers(existing, record);
     }).map((record) => ({ existing: state.materials.get(record.code), incoming: record }));
     const decisions = conflicts.length ? await showMaterialConflictDialog(conflicts) : new Map();
-    if (decisions === null) return toast("已取消本次追加更新，原物料库未发生变化。");
+    if (decisions === null) return toast("已取消本次导入，原物料库未发生变化。");
     const merged = new Map(state.materials);
     let added = 0;
     let overwritten = 0;
@@ -236,12 +236,12 @@ async function importMaterialDatabases(files) {
       if (materialContentDiffers(existing, record)) overwritten += 1;
     });
     const meta = {
-      fileName: `追加：${files.map((file) => file.name).join("、")}`,
+      fileName: `导入：${files.map((file) => file.name).join("、")}`,
       importedAt: new Date().toISOString(), fileCount: files.length, sheetCount: importedSheets,
       added, overwritten, kept,
     };
     await setMaterials([...merged.values()], true, meta);
-    toast(`追加更新完成：新增 ${added} 条，覆盖 ${overwritten} 条，保留原数据 ${kept} 条，共 ${state.materials.size} 条。`);
+    toast(`总表导入完成：新增 ${added} 条，覆盖 ${overwritten} 条，保留原数据 ${kept} 条，共 ${state.materials.size} 条。`);
     if (state.rawItems.length) enrichItems();
   } catch (error) {
     console.error(error);

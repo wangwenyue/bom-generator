@@ -7,7 +7,7 @@
   <title>元件清单自动生成</title>
   <link rel="stylesheet" href="styles.css?v=20260816-10">
   <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-  <script defer src="app.js?v=20260816-29"></script>
+  <script defer src="app.js?v=20260816-30"></script>
 </head>
 <body>
   <header class="topbar">
@@ -52,7 +52,7 @@
             <span class="db-icon">◈</span>
             <div><strong>本地物料数据库</strong><small id="db-count">已加载 0 条物料</small><small id="db-meta">正在读取浏览器数据库…</small></div>
           </div>
-          <div class="db-actions"><button type="button" class="text-button clear-db" id="clear-db" disabled>清除本地库</button><button type="button" class="secondary-button" id="export-db" disabled>导出总表</button><label class="secondary-button">追加更新<input type="file" id="db-file" accept=".xlsx,.xlsm,.csv" multiple hidden></label></div>
+          <div class="db-actions"><button type="button" class="text-button clear-db" id="clear-db" disabled>清除本地库</button><button type="button" class="secondary-button" id="export-db" disabled>导出总表</button><label class="secondary-button">导入总表<input type="file" id="db-file" accept=".xlsx,.xlsm,.csv" multiple hidden></label></div>
         </div>
 
         <div class="actions"><button class="primary-button" id="to-step-2" disabled>预览并核对 <span>→</span></button></div>
