@@ -908,7 +908,7 @@ async function downloadOutput() {
     link.download = state.outputName;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    toast("Bom 表已生成");
+    toast("BOM 表已生成");
   } catch (error) {
     console.error(error);
     const reason = friendlyExportError(error);

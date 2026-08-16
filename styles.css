@@ -591,6 +591,12 @@ footer { color: #9ea6a8; border-top: 1px solid #454d50; background: #171b1d; }
 .preview-table-wrap td:nth-child(n) { width: auto; }
 .preview-table-wrap th:nth-child(2),
 .preview-table-wrap td:nth-child(2) { left: 44px; }
+.preview-table-wrap tbody td:first-child,
+.preview-table-wrap tbody td:nth-child(2) {
+  position: relative;
+  left: auto;
+  z-index: auto;
+}
 .preview-table-wrap td:nth-child(2) .preview-select {
   display: block;
   width: 100%;
