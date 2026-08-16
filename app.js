@@ -12,6 +12,7 @@ const state = {
   classificationIssues: [],
   confirmedConflictSignature: "",
   previewBaseline: new Map(),
+  deletedPreviewIds: new Set(),
   materialMeta: null,
 };
 
@@ -551,6 +552,7 @@ function resetSource() {
   state.positionConflicts = [];
   state.confirmedConflictSignature = "";
   state.previewBaseline = new Map();
+  state.deletedPreviewIds = new Set();
   $("#source-file").value = "";
   $("#file-card").classList.add("hidden");
   $("#to-step-2").disabled = true;
@@ -578,6 +580,7 @@ async function preparePreview() {
   if (!state.items.length) return toast("请先上传元件清单。");
   enrichItems();
   state.previewBaseline = new Map(state.items.map((item) => [item.previewId, previewComparable(item)]));
+  state.deletedPreviewIds = new Set();
   renderPreview();
   goToStep(2);
   state.outputBuffer = null;
@@ -604,7 +607,7 @@ function renderPreview() {
       <td>${displayIndex + 1}</td><td>${classification}</td><td>${field("code", item.code)}</td>
       <td>${field("name", item.name, true)}</td><td>${field("model", item.model, true)}</td><td>${field("package", item.package, true)}</td>
       <td><span class="preview-quantity">${item.quantity}</span></td><td>${field("positions", item.positions.join(","), true)}</td>
-      <td class="status-cell">${statusMarkup(item)} <button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}">${editable ? "确认本行" : "修改此行"}</button></td></tr>`;
+      <td class="status-cell">${statusMarkup(item)} ${previewRowActions(item, editable)}</td></tr>`;
   }).join("");
   $("#confirm-conflicts").checked = confirmed && state.positionConflicts.length > 0;
   updatePreviewNextButton();
@@ -731,17 +734,54 @@ function makePreviewRowReadOnly(row, item) {
   row.children[4].innerHTML = readonly(item.model);
   row.children[5].innerHTML = readonly(item.package);
   row.children[7].innerHTML = readonly(item.positions.join(","));
-  row.querySelector(".status-cell").innerHTML = `${statusMarkup(item)} <button type="button" class="row-edit-button" data-action="edit-row">修改此行</button>`;
+  row.querySelector(".status-cell").innerHTML = `${statusMarkup(item)} ${previewRowActions(item, false)}`;
 }
 
-function handlePreviewAction(event) {
+function previewRowActions(item, editable) {
+  return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}">${editable ? "确认本行" : "修改此行"}</button>${item.deleteEnabled ? '<button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除此行</button>' : ""}</div>`;
+}
+
+async function copyPreviewRow(row, item) {
+  const currentValue = (field) => row.querySelector(`[data-field="${field}"]`)?.value.trim() ?? item[field] ?? "";
+  const text = [currentValue("code"), currentValue("name"), currentValue("model")].join("\t");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+  toast("已复制编码、物料名称和规格型号。");
+}
+
+async function handlePreviewAction(event) {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const row = button.closest("tr");
   const sourceIndex = Number(row.dataset.sourceIndex);
   const item = state.items[sourceIndex];
+  if (button.dataset.action === "copy-row") return copyPreviewRow(row, item);
+  if (button.dataset.action === "delete-row") {
+    const previewId = item.previewId;
+    if (!window.confirm(`确认删除编码“${item.code || "未填写"}”这一行吗？`)) return;
+    applyPreviewEditsAndRecheck(false, false);
+    state.items = state.items.filter((current) => current.previewId !== previewId);
+    state.deletedPreviewIds.add(previewId);
+    state.confirmedConflictSignature = "";
+    validateItems(state.items);
+    state.outputBuffer = null;
+    renderPreview();
+    toast("该行已从本次输出中删除。");
+    return;
+  }
   if (button.dataset.action === "edit-row") {
     item.forceEdit = true;
+    item.deleteEnabled = true;
     item.editBaseline = editableSnapshot(item);
   } else {
     const original = state.previewBaseline.get(item.previewId);
@@ -754,6 +794,7 @@ function handlePreviewAction(event) {
     current.userModified = editableSnapshot(current) !== initialSnapshot;
     if (current.conflictingPositions.length) current.confirmedConflictSignature = itemConflictSignature(current);
     delete current.editBaseline;
+    delete current.deleteEnabled;
   }
   renderPreview();
 }
@@ -817,7 +858,7 @@ function renderMetadataChangeSummary() {
     if (details.length) changes.push({ item, before, after, changedKeys, details });
   });
   state.previewBaseline.forEach((before, id) => {
-    if (!currentIds.has(id)) changes.push({ item: null, before, after: before, changedKeys: [], details: ["该行已合并到相同编码的物料中"] });
+    if (!currentIds.has(id)) changes.push({ item: null, before, after: before, changedKeys: [], deleted: state.deletedPreviewIds.has(id), details: [state.deletedPreviewIds.has(id) ? "用户已删除该行" : "该行已合并到相同编码的物料中"] });
   });
   const renderCell = (change, key) => {
     const changed = change.changedKeys.includes(key);
@@ -831,7 +872,7 @@ function renderMetadataChangeSummary() {
     ? `<div class="change-summary-head"><strong>预览修改明细</strong><span>共 ${changes.length} 行</span></div><table class="change-table"><thead><tr><th>#</th><th>物资分类</th><th>12位编码</th><th>物料名称</th><th>规格型号</th><th>封装</th><th>数量</th><th>位号清单</th><th>状态</th><th>修改说明</th></tr></thead><tbody>${changes.map((change, index) => {
       const item = change.item;
       const classification = change.after.classification === "A类备选" && change.after.linkedMainCode ? `${change.after.classification}\n关联：${change.after.linkedMainCode}` : change.after.classification;
-      const status = !item ? '<span class="tag warning">已合并</span>' : statusMarkup(item);
+      const status = !item ? `<span class="tag ${change.deleted ? "error" : "warning"}">${change.deleted ? "用户已删除" : "已合并"}</span>` : statusMarkup(item);
       return `<tr><td>${index + 1}</td><td>${escapeHtml(classification)}</td>${renderCell(change, "code")}${renderCell(change, "name")}${renderCell(change, "model")}${renderCell(change, "package")}<td>${item?.quantity ?? change.after.positions.length}</td>${renderCell(change, "positions")}<td>${status}</td><td class="change-notes">${change.details.map((detail) => `<div>${escapeHtml(detail)}</div>`).join("")}</td></tr>`;
     }).join("")}</tbody></table>`
     : `<div class="change-summary-head"><strong>预览修改明细</strong><span>未修改任何内容</span></div>`;

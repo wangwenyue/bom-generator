@@ -166,6 +166,11 @@ td { padding: 11px 10px; border-top: 1px solid #e4e9e6; vertical-align: top; ove
 .relation-note { display: block; margin-top: 5px; color: var(--muted); line-height: 1.4; }
 .status-cell .tag { margin: 0 3px 5px 0; white-space: normal; }
 .row-edit-button { display: block; margin-top: 6px; padding: 6px 9px; border: 1px solid #aebbb4; border-radius: 5px; color: var(--green-dark); background: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
+.row-actions .row-edit-button { display: inline-flex; align-items: center; justify-content: center; margin-top: 0; }
+.copy-row-button { color: #174ea6; }
+.delete-row-button { color: #a7281d; border-color: #dc756c; background: #fff2f0; }
+.delete-row-button:hover { color: #fff; border-color: #c7372b; background: #c7372b !important; }
 tr.error-row { background: #fff5f3; }
 tr.warning-row { background: #fff8e8; }
 .tag { display: inline-block; padding: 4px 8px; border-radius: 99px; color: #177a50; background: #e4f5eb; font-size: 11px; font-weight: 800; }
