@@ -594,7 +594,13 @@ function renderPreview() {
   $("#preview-body").innerHTML = sortedItems.map(({ item, sourceIndex }, displayIndex) => {
     const isError = item.status === "format" || item.status === "missing";
     const editable = isPreviewItemEditable(item);
-    const rowClass = isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "";
+    const rowClass = [
+      isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
+      item.userModified ? "modified-row" : "",
+      editable ? "editing-row" : "",
+      isThroughHoleAluminumElectrolytic(item) ? "through-hole-row" : "",
+      item.classification === "A类主选" ? "relation-main-row" : item.classification === "A类备选" ? "relation-backup-row" : "",
+    ].filter(Boolean).join(" ");
     const classifications = ["B类", "A类主选", "A类备选"];
     const field = (name, value, textarea = false) => editable
       ? textarea ? `<textarea class="preview-textarea" data-field="${name}">${escapeHtml(value)}</textarea>` : `<input class="preview-input" data-field="${name}" value="${escapeHtml(value)}">`
@@ -606,7 +612,7 @@ function renderPreview() {
       <td>${displayIndex + 1}</td><td>${classification}</td><td>${field("code", item.code)}</td>
       <td>${field("name", item.name, true)}</td><td>${field("model", item.model, true)}</td><td>${field("package", item.package, true)}</td>
       <td><span class="preview-quantity">${item.quantity}</span></td><td>${field("positions", item.positions.join(","), true)}</td>
-      <td class="status-cell">${statusMarkup(item)} ${previewRowActions(item, editable)}</td></tr>`;
+      <td class="status-cell">${statusMarkup(item)}</td><td class="operation-cell">${previewRowActions(item, editable)}</td></tr>`;
   }).join("");
   $("#confirm-conflicts").checked = confirmed && state.positionConflicts.length > 0;
   updatePreviewNextButton();
@@ -640,7 +646,7 @@ function statusMarkup(item) {
   const hasConflict = item.conflictingPositions.length > 0;
   const conflictConfirmed = hasConflict && item.confirmedConflictSignature === itemConflictSignature(item);
   const pendingModified = item.forceEdit && itemChangedFromInitial(item);
-  const status = item.status === "format" ? "编码格式错误" : item.status === "missing" ? "物料库未找到" : hasConflict && !conflictConfirmed ? "位号冲突" : pendingModified ? "修改待确认" : item.userModified ? "用户已修改" : conflictConfirmed ? "冲突已确认" : item.status === "manual" ? "人工补全" : "已匹配";
+  const status = item.status === "format" ? "! 编码格式错误" : item.status === "missing" ? "! 物料库未找到" : hasConflict && !conflictConfirmed ? "⚠ 位号冲突" : pendingModified ? "✎ 修改待确认" : item.userModified ? "✎ 用户已修改" : conflictConfirmed ? "✓ 冲突已确认" : item.status === "manual" ? "✎ 人工补全" : "✓ 已匹配";
   const statusClass = item.status === "format" || item.status === "missing" ? "error" : pendingModified ? "pending" : item.userModified ? "modified" : hasConflict || item.status === "manual" ? "warning" : "";
   const conflict = item.conflictingPositions.length ? `<span class="tag warning">位号冲突：${escapeHtml(item.conflictingPositions.join(", "))}</span>` : "";
   const relation = item.classificationIssue ? `<span class="tag error">${item.classificationIssue}</span>` : "";
@@ -693,11 +699,18 @@ function applyPreviewEditsAndRecheck(rerender = true, notify = false) {
     [...$("#preview-body").querySelectorAll("tr")].forEach((row) => {
       const item = state.items[Number(row.dataset.sourceIndex)];
       row.querySelector(".preview-quantity").textContent = item.quantity;
-      row.className = item.status === "format" || item.status === "missing" || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "";
+      row.className = [
+        item.status === "format" || item.status === "missing" || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
+        item.userModified ? "modified-row" : "",
+        isPreviewItemEditable(item) ? "editing-row" : "",
+        isThroughHoleAluminumElectrolytic(item) ? "through-hole-row" : "",
+        item.classification === "A类主选" ? "relation-main-row" : item.classification === "A类备选" ? "relation-backup-row" : "",
+      ].filter(Boolean).join(" ");
       const shouldBeReadOnly = !item.forceEdit && item.status !== "format" && item.status !== "missing" && !item.conflictingPositions.length && !item.classificationIssue;
       if (shouldBeReadOnly && row.querySelector("[data-field]")) makePreviewRowReadOnly(row, item);
       const cell = row.querySelector(".status-cell");
-      cell.innerHTML = `${statusMarkup(item)} ${previewRowActions(item, isPreviewItemEditable(item))}`;
+      cell.innerHTML = statusMarkup(item);
+      row.querySelector(".operation-cell").innerHTML = previewRowActions(item, isPreviewItemEditable(item));
     });
     renderPreviewSummary();
     updatePreviewNextButton();
@@ -732,7 +745,8 @@ function makePreviewRowReadOnly(row, item) {
   row.children[4].innerHTML = readonly(item.model);
   row.children[5].innerHTML = readonly(item.package);
   row.children[7].innerHTML = readonly(item.positions.join(","));
-  row.querySelector(".status-cell").innerHTML = `${statusMarkup(item)} ${previewRowActions(item, false)}`;
+  row.querySelector(".status-cell").innerHTML = statusMarkup(item);
+  row.querySelector(".operation-cell").innerHTML = previewRowActions(item, false);
 }
 
 function previewRowActions(item, editable) {
