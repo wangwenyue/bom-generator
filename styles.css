@@ -215,7 +215,6 @@ body {
   overflow-x: hidden;
   background-color: #202629;
   background-image: radial-gradient(circle at 16% 15%, rgba(0,202,255,.12), transparent 28%), radial-gradient(circle at 84% 28%, rgba(244,185,0,.1), transparent 26%), linear-gradient(#202629, #111719 75%);
-  cursor: url("assets/wrench-cursor.svg") 5 5, auto;
 }
 body::before {
   content: "";
@@ -244,7 +243,7 @@ body::after {
   will-change: background-position;
   backface-visibility: hidden;
 }
-button, a, label, select, input[type="checkbox"], input[type="file"] { cursor: url("assets/wrench-cursor.svg") 5 5, pointer; }
+button, a, label, select, input[type="checkbox"], input[type="file"] { cursor: pointer; }
 input[type="text"], input[type="date"], textarea { cursor: text; }
 .topbar { height: 82px; color: #f2f3ee; background: rgba(18,22,24,.96); border-bottom: 3px solid #d59b00; backdrop-filter: none; }
 .brand-mark { color: #171b1d; background: #f4b900; border: 2px solid #171b1d; border-radius: 2px; transform: none; box-shadow: 4px 4px 0 #687075; }
