@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="读取元件清单、查询物料库并生成标准 Excel 文件。">
+  <title>元件清单自动生成</title>
+  <link rel="stylesheet" href="styles.css?v=20260816-10">
+  <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script defer src="app.js?v=20260816-29"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#">
+      <img class="company-logo" src="assets/company-logo.png" alt="高新兴创联科技">
+      <span class="product-label"><strong>元件清单助手</strong><small>BOM WORKBENCH</small></span>
+    </a>
+    <span class="status-pill"><i></i> 本地安全处理</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">STANDARD BOM GENERATOR</p>
+      <h1>从原始清单到标准交付，<br><em>一次完成。</em></h1>
+      <p>自动识别 12 位编码与位号，合并重复物料，查询物料库并生成符合公司规范的 Excel 清单。</p>
+    </section>
+
+    <section class="workspace" aria-label="元件清单生成器">
+      <nav class="steps" aria-label="处理步骤">
+        <button class="step active" data-step="1"><b>01</b><span>上传清单<small>读取原始 Excel</small></span></button>
+        <button class="step" data-step="2"><b>02</b><span>预览核对<small>修改并实时复检</small></span></button>
+        <button class="step" data-step="3"><b>03</b><span>填写信息<small>完善编审批后导出</small></span></button>
+      </nav>
+
+      <div class="panel active" id="panel-1">
+        <div class="panel-heading">
+          <div><span class="section-number">01</span><h2>上传元件清单</h2></div>
+          <p>系统会自动寻找“12位编码”和“位号”列，数量由位号自动计算。</p>
+        </div>
+
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="source-file" accept=".xlsx,.xlsm">
+          <span class="upload-icon">↑</span>
+          <strong>拖放 Excel 文件到这里</strong>
+          <span>或 <u>点击选择文件</u></span>
+          <small>支持 .xlsx / .xlsm，单个文件不超过 20 MB</small>
+        </label>
+        <div id="file-card" class="file-card hidden"></div>
+
+        <div class="db-card">
+          <div>
+            <span class="db-icon">◈</span>
+            <div><strong>本地物料数据库</strong><small id="db-count">已加载 0 条物料</small><small id="db-meta">正在读取浏览器数据库…</small></div>
+          </div>
+          <div class="db-actions"><button type="button" class="text-button clear-db" id="clear-db" disabled>清除本地库</button><button type="button" class="secondary-button" id="export-db" disabled>导出总表</button><label class="secondary-button">追加更新<input type="file" id="db-file" accept=".xlsx,.xlsm,.csv" multiple hidden></label></div>
+        </div>
+
+        <div class="actions"><button class="primary-button" id="to-step-2" disabled>预览并核对 <span>→</span></button></div>
+      </div>
+
+      <div class="panel" id="panel-3">
+        <div class="panel-heading">
+          <div><span class="section-number">03</span><h2>填写更新信息</h2></div>
+          <p>原资料中已有的编制、审核和批准人员将自动沿用。</p>
+        </div>
+        <form id="metadata-form">
+          <div class="form-grid">
+            <label><span>本次日期</span><input required type="date" id="record-date"></label>
+            <label class="wide"><span>修改内容</span><input required type="text" id="change-note" placeholder="例如：更新元件清单"></label>
+            <label><span>编制人</span><input required type="text" id="compile-name" placeholder="请输入编制人"></label>
+            <label><span>审核人</span><input required type="text" id="review-name" placeholder="请输入审核人"></label>
+            <label><span>批准人</span><input required type="text" id="approve-name" placeholder="请输入批准人"></label>
+          </div>
+          <div class="detected-info" id="detected-info"></div>
+          <section class="preview-change-summary" id="preview-change-summary" aria-label="预览修改明细"></section>
+          <div class="actions split"><button type="button" class="text-button" data-back="2">← 返回预览</button><button class="primary-button" id="download-button" type="submit">生成并下载 Excel <span>↓</span></button></div>
+        </form>
+      </div>
+
+      <div class="panel" id="panel-2">
+        <div class="panel-heading">
+          <div><span class="section-number">02</span><h2>预览、修改并复检</h2></div>
+          <p>异常物料会在导出文件中醒目标记，便于后续补充。</p>
+        </div>
+        <div class="summary-grid" id="summary-grid"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>物资分类</th><th>12位编码</th><th>物料名称</th><th>规格型号</th><th>封装</th><th>数量</th><th>位号清单</th><th>状态</th></tr></thead>
+            <tbody id="preview-body"></tbody>
+          </table>
+        </div>
+        <div class="notice" id="notice"></div>
+        <div class="preview-edit-actions"><span class="live-check-status" id="live-check-status">修改后将自动重新检查</span><button type="button" class="secondary-button" id="recheck-button">立即重新检查</button></div>
+        <div class="conflict-confirm hidden" id="conflict-confirm">
+          <label><input type="checkbox" id="confirm-conflicts"> 我已核对上述位号冲突，确认继续导出</label>
+        </div>
+        <div class="actions split"><button type="button" class="text-button" data-back="1">← 返回上传</button><button class="primary-button" id="to-step-3" disabled>确认预览，填写编审批信息 <span>→</span></button></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>元件清单助手</span><span>文件仅在当前浏览器中处理，不会上传到服务器。</span><span class="designer-credit">Designed by Wenyue Wang</span></footer>
+  <div class="modal-backdrop hidden" id="material-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="material-conflict-title">
+    <section class="conflict-modal">
+      <div class="conflict-modal-head"><span class="conflict-alert-icon" aria-hidden="true">!</span><div><small>DATABASE CONFLICT</small><h2 id="material-conflict-title">发现物料数据冲突</h2><p id="material-conflict-count"></p></div></div>
+      <div class="conflict-table-wrap"><table class="material-conflict-table"><thead><tr><th>12位编码</th><th>库内现有数据</th><th>本次导入数据</th><th>选择</th></tr></thead><tbody id="material-conflict-body"></tbody></table></div>
+      <div class="actions split"><button type="button" class="text-button" id="cancel-material-conflicts">取消本次更新</button><button type="button" class="primary-button" id="confirm-material-conflicts">确认选择并更新 <span>→</span></button></div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+</body>
+</html>
