@@ -477,3 +477,93 @@ footer { color: #9ea6a8; border-top: 1px solid #454d50; background: #171b1d; }
   0%, 100% { box-shadow: 0 0 0 rgba(244,185,0,0); }
   50% { box-shadow: 0 0 14px rgba(244,185,0,.38); }
 }
+
+/* Light steel variant: blend the data grid into the surrounding workspace. */
+.summary-grid .metric {
+  position: relative;
+  overflow: hidden;
+  min-height: 82px;
+  padding: 17px 17px 15px;
+  border-color: #cbd3d2;
+  background: linear-gradient(145deg, #fbfcfa, #eef1ee);
+  box-shadow: 0 7px 16px rgba(38,50,52,.08);
+}
+.summary-grid .metric::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #00aec8; }
+.summary-grid .metric:nth-child(3)::before { background: #2d8bd4; }
+.summary-grid .metric:nth-child(4)::before,
+.summary-grid .metric:nth-child(5)::before { background: #d59b00; }
+.summary-grid .metric:nth-child(6)::before { background: #747f82; }
+.summary-grid .metric strong { color: #20282b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.summary-grid .metric:nth-child(3) strong { color: #2378ba; }
+.summary-grid .metric:nth-child(4) strong,
+.summary-grid .metric:nth-child(5) strong { color: #c38100; }
+.preview-data-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 54px;
+  padding: 12px 18px;
+  border: 1px solid #bec8c8;
+  border-bottom: 0;
+  color: #465155;
+  background: linear-gradient(180deg, #f7f8f6, #e8ecea);
+  box-shadow: 0 8px 20px rgba(43,56,59,.08);
+  font-size: 12px;
+}
+.preview-data-toolbar strong { margin-right: 8px; color: #20282b; font-size: 16px; }
+.preview-data-toolbar span { display: inline-flex; align-items: center; gap: 7px; }
+.preview-data-toolbar i { width: 9px; height: 9px; border-radius: 50%; background: #00b8d4; box-shadow: 0 0 8px rgba(0,184,212,.42); }
+.preview-data-toolbar b { color: #00a9c2; font: 900 20px/1 ui-monospace, monospace; }
+.preview-table-wrap {
+  border: 2px solid #00b8d4;
+  border-top-width: 1px;
+  border-radius: 0 0 5px 5px;
+  background: #f7f9f8;
+  box-shadow: inset 0 0 0 1px rgba(0,184,212,.12), 0 14px 28px rgba(35,50,53,.11);
+  scrollbar-color: #aebbbc #edf1ef;
+}
+.preview-table-wrap::-webkit-scrollbar-track { background: #edf1ef; }
+.preview-table-wrap::-webkit-scrollbar-thumb { border-color: #edf1ef; background: #aebbbc; }
+.preview-table-wrap table { color: #263134; background: #f8faf9; }
+.preview-table-wrap thead th {
+  color: #f7faf9;
+  border-right-color: #566367;
+  background: linear-gradient(180deg, #394448, #2a3336);
+  box-shadow: 0 2px 0 #00b8d4, 0 8px 15px rgba(35,48,51,.18);
+  text-shadow: none;
+}
+.preview-table-wrap tbody td {
+  color: #263134;
+  border-top-color: #d8dfde;
+  border-right-color: #e1e6e4;
+  background: #fbfcfb;
+}
+.preview-table-wrap tbody tr:nth-child(even) td { background: #f0f5f6; }
+.preview-table-wrap tbody tr:hover td {
+  background: #e8f8fa;
+  box-shadow: inset 0 1px #00b8d4, inset 0 -1px #00b8d4;
+}
+.preview-table-wrap .preview-input,
+.preview-table-wrap .preview-select,
+.preview-table-wrap .preview-textarea {
+  color: #253033;
+  border-color: #aebbbb;
+  background: rgba(255,255,255,.96);
+}
+.preview-table-wrap .preview-select option { color: #253033; background: #fff; }
+.preview-table-wrap .preview-quantity { color: #087f92; border-color: #22b8cf; background: #f3fdff; }
+.preview-table-wrap .tag { color: #168457; border-color: #9bd6b8; background: #eaf8f0; }
+.preview-table-wrap .tag.modified { color: #236fb2; border-color: #acd0f2; background: #eaf4ff; }
+.preview-table-wrap .tag.warning,
+.preview-table-wrap .tag.pending { color: #a96f00; border-color: #edcf87; background: #fff6da; }
+.preview-table-wrap .tag.error { color: #b53a30; border-color: #edb0aa; background: #fff0ee; }
+.preview-table-wrap .row-edit-button { background: rgba(255,255,255,.78); }
+.preview-table-wrap .copy-row-button { color: #2177bd; border-color: #6eb2ea; }
+.preview-table-wrap .copy-row-button:hover { color: #fff; background: #2d8bd4; }
+.preview-table-wrap .row-edit-button[data-action="edit-row"],
+.preview-table-wrap .row-edit-button[data-action="finish-row"] { color: #b77b00; border-color: #e1ac38; }
+.preview-table-wrap .delete-row-button { color: #bf3e34; border-color: #e0837b; background: rgba(255,255,255,.78); }
+.preview-table-wrap .through-hole-row td { color: #596265; background: #e2e5e3 !important; }
+.preview-table-wrap .modified-row td { background: #eaf4ff; }
+.preview-table-wrap .warning-row td { background: #fff7df; }
+.preview-table-wrap .error-row td { background: #fff0ee; }
