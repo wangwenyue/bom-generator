@@ -598,7 +598,7 @@ function renderPreview() {
       isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
       item.userModified ? "modified-row" : "",
       editable ? "editing-row" : "",
-      isThroughHoleAluminumElectrolytic(item) ? "through-hole-row" : "",
+      isThroughHoleComponent(item) ? "through-hole-row" : "",
       item.classification === "A类主选" ? "relation-main-row" : item.classification === "A类备选" ? "relation-backup-row" : "",
     ].filter(Boolean).join(" ");
     const classifications = ["B类", "A类主选", "A类备选"];
@@ -703,7 +703,7 @@ function applyPreviewEditsAndRecheck(rerender = true, notify = false) {
         item.status === "format" || item.status === "missing" || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
         item.userModified ? "modified-row" : "",
         isPreviewItemEditable(item) ? "editing-row" : "",
-        isThroughHoleAluminumElectrolytic(item) ? "through-hole-row" : "",
+        isThroughHoleComponent(item) ? "through-hole-row" : "",
         item.classification === "A类主选" ? "relation-main-row" : item.classification === "A类备选" ? "relation-backup-row" : "",
       ].filter(Boolean).join(" ");
       const shouldBeReadOnly = !item.forceEdit && item.status !== "format" && item.status !== "missing" && !item.conflictingPositions.length && !item.classificationIssue;
@@ -908,7 +908,7 @@ async function downloadOutput() {
     link.download = state.outputName;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    toast("标准 Excel 已生成。");
+    toast("Bom 表已生成");
   } catch (error) {
     console.error(error);
     const reason = friendlyExportError(error);
@@ -991,7 +991,7 @@ function updateComponentSheet(workbook) {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
         cell.font = { ...(cell.font || {}), color: { argb: "FF9C0006" }, bold: column === 10 };
       }
-    } else if (isThroughHoleAluminumElectrolytic(item)) {
+    } else if (isThroughHoleComponent(item)) {
       for (let column = 1; column <= 10; column += 1) {
         sheet.getCell(row.number, column).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } };
       }
@@ -1121,14 +1121,14 @@ function componentSequence(item) {
   return numbers.length ? Math.min(...numbers) : Number.MAX_SAFE_INTEGER;
 }
 
-function isThroughHoleAluminumElectrolytic(item) {
+function isThroughHoleComponent(item) {
   const nameAndModel = `${item.name || ""} ${item.model || ""}`;
   const packageText = String(item.package || "");
   const allText = `${nameAndModel} ${packageText}`;
   const isAluminumElectrolytic = /铝电解|铝质电解|电解电容/i.test(nameAndModel);
   const explicitlyThroughHole = /直插|插件|径向|引线|卧式|立式|RADIAL|DIP|THT/i.test(allText);
   const throughHoleDimensions = !/贴片|SMD|SMT/i.test(allText) && /(?:φ|Φ)?\d+(?:\.\d+)?\s*(?:mm)?\s*[×*xX]\s*\d+(?:\.\d+)?\s*(?:mm)?/i.test(`${packageText} ${item.model || ""}`);
-  return isAluminumElectrolytic && (explicitlyThroughHole || throughHoleDimensions);
+  return explicitlyThroughHole || (isAluminumElectrolytic && throughHoleDimensions);
 }
 
 function setQuantityFormula(row, result) {
