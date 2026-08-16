@@ -567,3 +567,99 @@ footer { color: #9ea6a8; border-top: 1px solid #454d50; background: #171b1d; }
 .preview-table-wrap .modified-row td { background: #eaf4ff; }
 .preview-table-wrap .warning-row td { background: #fff7df; }
 .preview-table-wrap .error-row td { background: #fff0ee; }
+
+/* Precise column grid and a matching change-summary table. */
+.preview-table-wrap table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+.preview-table-wrap col.col-index { width: 44px; }
+.preview-table-wrap col.col-classification { width: 126px; }
+.preview-table-wrap col.col-code { width: 122px; }
+.preview-table-wrap col.col-name { width: 122px; }
+.preview-table-wrap col.col-model { width: 168px; }
+.preview-table-wrap col.col-package { width: 82px; }
+.preview-table-wrap col.col-quantity { width: 58px; }
+.preview-table-wrap col.col-positions { width: 158px; }
+.preview-table-wrap col.col-status { width: 120px; }
+.preview-table-wrap col.col-actions { width: 120px; }
+.preview-table-wrap th,
+.preview-table-wrap td { box-sizing: border-box; }
+.preview-table-wrap thead th { padding: 14px 10px; vertical-align: middle; }
+.preview-table-wrap tbody td { padding: 12px 10px; vertical-align: middle; }
+.preview-table-wrap th:nth-child(n),
+.preview-table-wrap td:nth-child(n) { width: auto; }
+.preview-table-wrap th:nth-child(2),
+.preview-table-wrap td:nth-child(2) { left: 44px; }
+.preview-table-wrap td:nth-child(2) .preview-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 22px 6px 7px;
+  text-overflow: ellipsis;
+}
+.preview-table-wrap td:nth-child(2) .classification-link { font-size: 10px; }
+.preview-table-wrap .row-actions { grid-template-columns: 1fr; gap: 5px; }
+.preview-table-wrap .row-edit-button { width: 100%; min-height: 29px; padding: 5px 6px; }
+
+.preview-change-summary {
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #bec8c8;
+  border-radius: 5px;
+  background: #f7f9f8;
+  box-shadow: 0 12px 26px rgba(35,50,53,.1);
+}
+.preview-change-summary .change-summary-head {
+  min-height: 54px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #bec8c8;
+  background: linear-gradient(180deg, #f7f8f6, #e8ecea);
+}
+.preview-change-summary .change-summary-head strong { color: #20282b; font-size: 16px; }
+.preview-change-summary .change-summary-head span { color: #667175; font-size: 11px; }
+.preview-change-summary .change-table {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #263134;
+  background: #fbfcfb;
+  font-size: 11px;
+}
+.preview-change-summary .change-table thead th {
+  padding: 12px 8px;
+  color: #f7faf9;
+  border-right: 1px solid #566367;
+  border-bottom: 2px solid #00b8d4;
+  background: linear-gradient(180deg, #394448, #2a3336);
+  font-size: 10px;
+  text-align: left;
+}
+.preview-change-summary .change-table tbody td {
+  padding: 10px 8px;
+  border-top: 1px solid #d8dfde;
+  border-right: 1px solid #e1e6e4;
+  vertical-align: middle;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.preview-change-summary .change-table tbody tr:nth-child(even) td { background: #f0f5f6; }
+.preview-change-summary .change-table th:nth-child(1) { width: 3%; }
+.preview-change-summary .change-table th:nth-child(2) { width: 8%; }
+.preview-change-summary .change-table th:nth-child(3) { width: 10%; }
+.preview-change-summary .change-table th:nth-child(4) { width: 9%; }
+.preview-change-summary .change-table th:nth-child(5) { width: 14%; }
+.preview-change-summary .change-table th:nth-child(6) { width: 7%; }
+.preview-change-summary .change-table th:nth-child(7) { width: 4%; }
+.preview-change-summary .change-table th:nth-child(8) { width: 14%; }
+.preview-change-summary .change-table th:nth-child(9) { width: 10%; }
+.preview-change-summary .change-table th:nth-child(10) { width: 21%; }
+.preview-change-summary .change-table .changed-cell {
+  background: #eaf4ff;
+  box-shadow: inset 3px 0 #2d8bd4;
+}
+.preview-change-summary .change-table .changed-cell small { color: #6d7880; }
+.preview-change-summary .change-table .changed-cell strong { color: #205f98; }
+.preview-change-summary .change-notes { color: #4d5a5e; }
