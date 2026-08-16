@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="读取元件清单、查询物料库并生成标准 Excel 文件。">
   <title>元件清单自动生成</title>
-  <link rel="stylesheet" href="styles.css?v=20260816-11">
+  <link rel="stylesheet" href="styles.css?v=20260816-12">
   <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-  <script defer src="app.js?v=20260816-32"></script>
+  <script defer src="app.js?v=20260816-33"></script>
 </head>
 <body>
   <header class="topbar">
@@ -83,7 +83,7 @@
           <p>异常物料会在导出文件中醒目标记，便于后续补充。</p>
         </div>
         <div class="summary-grid" id="summary-grid"></div>
-        <div class="table-wrap">
+        <div class="table-wrap preview-table-wrap">
           <table>
             <thead><tr><th>#</th><th>物资分类</th><th>12位编码</th><th>物料名称</th><th>规格型号</th><th>封装</th><th>数量</th><th>位号清单</th><th>状态</th></tr></thead>
             <tbody id="preview-body"></tbody>

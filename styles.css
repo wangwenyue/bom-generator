@@ -144,6 +144,8 @@ h2 { margin: 0; font: 500 clamp(23px, 3vw, 30px) Georgia, "Songti SC", serif; }
 .metric strong { margin-top: 5px; font: 500 25px Georgia, serif; }
 .metric.warning strong { color: var(--danger); }
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 9px; }
+.preview-table-wrap { max-height: min(72vh, 760px); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.preview-table-wrap thead th { position: sticky; top: 0; z-index: 4; box-shadow: 0 2px 0 #555e61, 0 8px 15px rgba(0,0,0,.14); }
 table { width: 100%; min-width: 1120px; table-layout: fixed; border-collapse: collapse; font-size: 13px; white-space: normal; }
 th { padding: 13px 12px; color: #526159; background: #f0f4f1; text-align: left; font-size: 12px; }
 th:nth-child(1) { width: 44px; }

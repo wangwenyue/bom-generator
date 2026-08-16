@@ -736,7 +736,7 @@ function makePreviewRowReadOnly(row, item) {
 }
 
 function previewRowActions(item, editable) {
-  return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}">${editable ? "确认本行" : "修改此行"}</button>${item.deleteEnabled ? '<button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除此行</button>' : ""}</div>`;
+  return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}" title="${editable ? "完成并确认本行修改" : "修改本行"}">修改</button><button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除</button></div>`;
 }
 
 function isPreviewItemEditable(item) {
@@ -785,7 +785,6 @@ async function handlePreviewAction(event) {
   }
   if (button.dataset.action === "edit-row") {
     item.forceEdit = true;
-    item.deleteEnabled = true;
     item.editBaseline = editableSnapshot(item);
   } else {
     const original = state.previewBaseline.get(item.previewId);
@@ -798,7 +797,6 @@ async function handlePreviewAction(event) {
     current.userModified = editableSnapshot(current) !== initialSnapshot;
     if (current.conflictingPositions.length) current.confirmedConflictSignature = itemConflictSignature(current);
     delete current.editBaseline;
-    delete current.deleteEnabled;
   }
   renderPreview();
 }
