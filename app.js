@@ -593,8 +593,7 @@ function renderPreview() {
   const sortedItems = state.items.map((item, sourceIndex) => ({ item, sourceIndex })).sort((a, b) => issueRank(a.item) - issueRank(b.item) || a.sourceIndex - b.sourceIndex);
   $("#preview-body").innerHTML = sortedItems.map(({ item, sourceIndex }, displayIndex) => {
     const isError = item.status === "format" || item.status === "missing";
-    const conflictConfirmed = Boolean(item.conflictingPositions.length && item.confirmedConflictSignature === itemConflictSignature(item));
-    const editable = Boolean(item.forceEdit || isError || (item.conflictingPositions.length && !conflictConfirmed) || item.classificationIssue);
+    const editable = isPreviewItemEditable(item);
     const rowClass = isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "";
     const classifications = ["B类", "A类主选", "A类备选"];
     const field = (name, value, textarea = false) => editable
@@ -698,8 +697,7 @@ function applyPreviewEditsAndRecheck(rerender = true, notify = false) {
       const shouldBeReadOnly = !item.forceEdit && item.status !== "format" && item.status !== "missing" && !item.conflictingPositions.length && !item.classificationIssue;
       if (shouldBeReadOnly && row.querySelector("[data-field]")) makePreviewRowReadOnly(row, item);
       const cell = row.querySelector(".status-cell");
-      const button = cell.querySelector(".row-edit-button");
-      cell.innerHTML = `${statusMarkup(item)} ${button?.outerHTML || ""}`;
+      cell.innerHTML = `${statusMarkup(item)} ${previewRowActions(item, isPreviewItemEditable(item))}`;
     });
     renderPreviewSummary();
     updatePreviewNextButton();
@@ -739,6 +737,12 @@ function makePreviewRowReadOnly(row, item) {
 
 function previewRowActions(item, editable) {
   return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}">${editable ? "确认本行" : "修改此行"}</button>${item.deleteEnabled ? '<button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除此行</button>' : ""}</div>`;
+}
+
+function isPreviewItemEditable(item) {
+  const isError = item.status === "format" || item.status === "missing";
+  const conflictConfirmed = Boolean(item.conflictingPositions.length && item.confirmedConflictSignature === itemConflictSignature(item));
+  return Boolean(item.forceEdit || isError || (item.conflictingPositions.length && !conflictConfirmed) || item.classificationIssue);
 }
 
 async function copyPreviewRow(row, item) {
