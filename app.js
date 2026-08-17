@@ -13,7 +13,9 @@ const state = {
   confirmedConflictSignature: "",
   previewBaseline: new Map(),
   deletedPreviewIds: new Set(),
+  deletedReasons: new Map(),
   materialMeta: null,
+  sourceFormat: "",
 };
 
 const MATERIAL_DB_NAME = "bom-material-database";
@@ -69,14 +71,28 @@ function bindEvents() {
   });
   $("#metadata-form").addEventListener("input", updateMetadataSubmitState);
   $$('[data-back]').forEach((button) => button.addEventListener("click", () => goToStep(Number(button.dataset.back))));
-  $("#to-step-3").addEventListener("click", () => { if (previewCanProceed()) goToStep(3); });
+  $("#to-step-3").addEventListener("click", () => {
+    if (previewCanProceed()) return goToStep(3);
+    const pending = previewPendingItems().length;
+    toast(`还有 ${pending} 行尚未完成确认。请完成修改并点击“确认”，或删除不需要的行。`);
+  });
   $("#recheck-button").addEventListener("click", () => applyPreviewEditsAndRecheck(true, true));
   $("#preview-body").addEventListener("click", handlePreviewAction);
-  $("#preview-body").addEventListener("input", debounce(() => applyPreviewEditsAndRecheck(false, false), 260));
-  $("#preview-body").addEventListener("change", () => applyPreviewEditsAndRecheck(true, false));
+  $("#preview-body").addEventListener("input", debounce((event) => {
+    if (event.target.matches("[data-material-line]")) return;
+    applyPreviewEditsAndRecheck(false, false);
+  }, 260));
+  $("#preview-body").addEventListener("change", (event) => {
+    if (event.target.matches("[data-material-line]")) return;
+    applyPreviewEditsAndRecheck(true, false);
+  });
   $("#confirm-conflicts").addEventListener("change", (event) => {
     state.confirmedConflictSignature = event.target.checked ? conflictSignature() : "";
-    updatePreviewNextButton();
+    state.items.filter((item) => item.conflictingPositions.length).forEach((item) => {
+      item.confirmedConflictSignature = event.target.checked ? itemConflictSignature(item) : "";
+      if (event.target.checked) item.userModified = true;
+    });
+    renderPreview();
   });
   updateMetadataSubmitState();
 }
@@ -170,6 +186,21 @@ async function replaceIndexedMaterials(records, meta) {
     transaction.oncomplete = () => { database.close(); resolve(); };
     transaction.onerror = () => { database.close(); reject(transaction.error); };
   });
+}
+
+async function upsertIndexedMaterial(record) {
+  const database = await openMaterialDatabase();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction("materials", "readwrite");
+    transaction.objectStore("materials").put(record);
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+  state.materials.set(record.code, record);
+  $("#db-count").textContent = `已加载 ${state.materials.size} 条物料`;
+  $("#clear-db").disabled = false;
+  $("#export-db").disabled = false;
 }
 
 async function clearLocalMaterialDatabase() {
@@ -362,26 +393,99 @@ function worksheetToObjects(worksheet) {
 
 async function handleSourceFile(file) {
   if (!file) return;
-  if (!/\.(xlsx|xlsm)$/i.test(file.name)) return toast("请选择 .xlsx 或 .xlsm 文件。");
+  if (!/\.(bom|xlsx|xlsm)$/i.test(file.name)) return toast("请选择 .BOM、.xlsx 或 .xlsm 文件。");
   if (file.size > 20 * 1024 * 1024) return toast("文件超过 20 MB，请精简后重试。");
   try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(await file.arrayBuffer());
-    const parsed = parseSourceWorkbook(workbook);
+    const isBom = /\.bom$/i.test(file.name);
+    let workbook = null;
+    let parsed;
+    if (isBom) {
+      parsed = parseBomSource(await file.arrayBuffer());
+    } else {
+      workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
+      parsed = parseSourceWorkbook(workbook);
+    }
     state.sourceFile = file;
     state.sourceWorkbook = workbook;
-    state.sourceSheet = parsed.sheet;
+    state.sourceSheet = parsed.sheet || null;
+    state.sourceFormat = isBom ? "bom" : "excel";
     state.rawItems = parsed.items;
-    state.sourceMeta = readSourceMetadata(workbook, file.name);
+    state.sourceMeta = isBom ? readBomMetadata(file.name) : readSourceMetadata(workbook, file.name);
+    if (isBom && state.sourceMeta.dateInput) $("#record-date").value = state.sourceMeta.dateInput;
     enrichItems();
-    showFileCard(file, parsed.items.length, parsed.sheet.name);
+    showFileCard(file, parsed.items.length, parsed.sheetName || parsed.sheet.name);
     $("#to-step-2").disabled = false;
-    toast(`已读取 ${parsed.items.length} 条原始记录。`);
+    const mismatchCount = parsed.items.filter((item) => item.quantityMismatch).length;
+    toast(`已读取 ${parsed.items.length} 条原始记录${mismatchCount ? `，${mismatchCount} 条数量需要核对` : ""}。`);
   } catch (error) {
     console.error(error);
     resetSource();
-    toast(error.message || "Excel 读取失败。");
+    toast(error.message || "清单读取失败。");
   }
+}
+
+function parseBomSource(buffer) {
+  const text = decodeBomText(buffer).replace(/^\uFEFF/, "");
+  const rows = parseDelimitedRows(text, "\t");
+  const headerIndex = rows.findIndex((row) => {
+    const keys = row.map(normalized);
+    return ["item", "quantity", "reference", "part", "ggxh"].every((key) => keys.includes(key));
+  });
+  if (headerIndex < 0) throw new Error("BOM 中未找到 Item、Quantity、Reference、Part、GGXH 表头。");
+  const headers = rows[headerIndex].map(normalized);
+  const columns = Object.fromEntries(["item", "quantity", "reference", "part", "ggxh"].map((key) => [key, headers.indexOf(key)]));
+  const items = [];
+  rows.slice(headerIndex + 1).forEach((row, offset) => {
+    const sourceItem = String(row[columns.item] || "").trim();
+    const positionsText = String(row[columns.reference] || "").trim();
+    const sourcePart = String(row[columns.part] || "").trim();
+    const sourceModel = String(row[columns.ggxh] || "").trim();
+    if (!positionsText || !sourceModel || /^_+$/.test(sourceItem)) return;
+    const positions = splitPositions(positionsText);
+    const sourceQuantity = Number(String(row[columns.quantity] || "").trim());
+    items.push({
+      code: "", positions, positionsText, classification: "B类",
+      sourceRow: headerIndex + offset + 2, sourceItem, sourcePart, sourceModel,
+      sourceQuantity: Number.isFinite(sourceQuantity) ? sourceQuantity : null,
+      quantityMismatch: Number.isFinite(sourceQuantity) && sourceQuantity !== positions.length,
+      sourceType: "bom",
+    });
+  });
+  if (!items.length) throw new Error("找到了 BOM 表头，但没有可处理的物料数据。");
+  return { sheetName: "原始 BOM", items };
+}
+
+function decodeBomText(buffer) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch (_) {
+    try { return new TextDecoder("gb18030").decode(buffer); }
+    catch (_) { throw new Error("BOM 文本编码无法识别，请确认文件由 Candace 正常导出。"); }
+  }
+}
+
+function parseDelimitedRows(text, delimiter) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"' && quoted && text[index + 1] === '"') { field += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === delimiter && !quoted) { row.push(field); field = ""; }
+    else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(field);
+      if (row.some((value) => value !== "")) rows.push(row);
+      row = [];
+      field = "";
+    } else field += char;
+  }
+  row.push(field);
+  if (row.some((value) => value !== "")) rows.push(row);
+  return rows;
 }
 
 function parseSourceWorkbook(workbook) {
@@ -419,39 +523,126 @@ function splitPositions(value) {
   return [...new Set(String(value || "").split(/[,，;；\s]+/).map((item) => item.trim()).filter(Boolean))];
 }
 
+function normalizeSpecification(value) {
+  return String(value || "").normalize("NFKC").toUpperCase()
+    .replace(/[µμ]/g, "U")
+    .replace(/[×✕]/g, "X")
+    .replace(/(\d)[,，](?=\d)/g, "$1.")
+    .replace(/[^\p{L}\p{N}.]+/gu, "");
+}
+
+function findMaterialsByModel(model) {
+  const key = normalizeSpecification(model);
+  if (!key) return [];
+  const materials = [...state.materials.values()];
+  const exact = materials.filter((material) => normalizeSpecification(material.model) === key);
+  if (exact.length) return exact;
+  return materials.filter((material) => normalizeSpecification(material.model).includes(key));
+}
+
+function hasNcMarker(item) {
+  return /(?:^|\/)\s*NC\s*(?:\/|$)/i.test(item.sourceModel || item.model || "")
+    || /(?:^|\/)\s*NC\s*(?:\/|$)/i.test(item.sourcePart || "");
+}
+
+function resistorPrecision(model) {
+  const text = String(model || "").normalize("NFKC").toUpperCase().replace(/\s+/g, "");
+  const tolerance = text.match(/(?:±|\+\/-?)(\d+(?:\.\d+)?)%/) || text.match(/(\d+(?:\.\d+)?)%$/);
+  if (!tolerance || !/(?:^|[-_/])R(?:C|S)?[-_/]|电阻/i.test(text)) return null;
+  const percent = Number(tolerance[1]);
+  if (!Number.isFinite(percent)) return null;
+  return {
+    percent,
+    family: normalizeSpecification(text.replace(tolerance[0], "")),
+  };
+}
+
+function resolveRawSourceItem(item) {
+  if (item.sourceType !== "bom") return { ...item, matchCandidates: [] };
+  const candidates = findMaterialsByModel(item.sourceModel);
+  return {
+    ...item,
+    code: candidates.length === 1 ? candidates[0].code : "",
+    matchCandidates: candidates.map((candidate) => candidate.code),
+  };
+}
+
 function enrichItems() {
   const merged = new Map();
-  state.rawItems.forEach((item, index) => {
-    const key = item.code || `__blank_${index}`;
-    if (!merged.has(key)) merged.set(key, { code: item.code, positions: [], classification: item.classification || "B类", rows: [] });
+  state.rawItems.map(resolveRawSourceItem).forEach((item, index) => {
+    const key = item.code || (item.sourceType === "bom" ? `__model_${normalizeSpecification(item.sourceModel)}_${normalizeSpecification(item.sourcePart)}` : `__blank_${index}`);
+    if (!merged.has(key)) merged.set(key, {
+      code: item.code, positions: [], classification: item.classification || "B类", rows: [],
+      sourceType: item.sourceType || "excel", sourcePart: item.sourcePart || "", sourceModel: item.sourceModel || "",
+      sourceQuantity: 0, matchCandidates: item.matchCandidates || [], quantityMismatch: false,
+    });
     const target = merged.get(key);
     target.positions = [...new Set([...target.positions, ...item.positions])];
     target.rows.push(item.sourceRow);
+    if (Number.isFinite(item.sourceQuantity)) target.sourceQuantity += item.sourceQuantity;
+    target.quantityMismatch ||= Boolean(item.quantityMismatch);
+    target.matchCandidates = [...new Set([...target.matchCandidates, ...(item.matchCandidates || [])])];
   });
-  state.items = [...merged.values()].map((item, index) => ({ ...item, previewId: `item-${index}`, quantity: item.positions.length, name: "", model: "", package: "" }));
+  state.items = [...merged.values()].map((item, index) => ({
+    ...item, previewId: `item-${index}`, quantity: item.positions.length, name: "",
+    model: item.sourceType === "bom" ? item.sourceModel : "", package: "",
+    quantityMismatch: item.quantityMismatch || (item.sourceQuantity > 0 && item.sourceQuantity !== item.positions.length),
+  }));
   validateItems(state.items);
 }
 
 function validateItems(items) {
   items.forEach((item) => {
-    const material = state.materials.get(item.code);
-    const validFormat = /^\d{12}$/.test(item.code);
+    let material = state.materials.get(item.code);
+    let validFormat = /^\d{12}$/.test(item.code);
+    if (item.sourceType === "bom" && !validFormat) {
+      const candidates = findMaterialsByModel(item.model || item.sourceModel);
+      item.matchCandidates = candidates.map((candidate) => candidate.code);
+      if (candidates.length === 1) {
+        item.code = candidates[0].code;
+        material = candidates[0];
+        validFormat = true;
+      }
+    }
     item.name = item.name || material?.name || "";
     item.model = item.model || material?.model || "";
     item.package = item.package || material?.package || "";
     item.quantity = item.positions.length;
     const manuallyComplete = Boolean(item.name && item.model && item.package);
-    item.status = material ? "ok" : manuallyComplete ? "manual" : !validFormat ? "format" : "missing";
+    item.status = material ? "ok"
+      : item.sourceType === "bom" && !validFormat && item.matchCandidates.length > 1 ? "model_ambiguous"
+      : item.sourceType === "bom" && !validFormat ? "model_missing"
+      : manuallyComplete && validFormat ? "manual"
+      : !validFormat ? "format" : "missing";
+    item.ncRequired = hasNcMarker(item);
+    if (!item.ncRequired) item.ncDecision = "";
+    item.precisionSuggestion = null;
+  });
+  items.forEach((item) => {
+    const current = resistorPrecision(item.model || item.sourceModel);
+    if (!current) return;
+    const better = items
+      .map((candidate) => ({ candidate, parsed: resistorPrecision(candidate.model || candidate.sourceModel) }))
+      .filter(({ candidate, parsed }) => candidate !== item && parsed?.family === current.family && parsed.percent < current.percent)
+      .sort((a, b) => a.parsed.percent - b.parsed.percent)[0];
+    if (better) item.precisionSuggestion = {
+      targetPreviewId: better.candidate.previewId,
+      targetModel: better.candidate.model || better.candidate.sourceModel,
+      targetPercent: better.parsed.percent,
+    };
+    else item.precisionDecision = "";
   });
   const positionOwners = new Map();
-  items.forEach((item) => item.positions.forEach((position) => {
+  items.forEach((item, itemIndex) => item.positions.forEach((position) => {
     const key = position.toUpperCase();
-    if (!positionOwners.has(key)) positionOwners.set(key, { position, codes: new Set() });
-    positionOwners.get(key).codes.add(item.code || "（空编码）");
+    if (!positionOwners.has(key)) positionOwners.set(key, { position, owners: new Set(), codes: new Set() });
+    const entry = positionOwners.get(key);
+    entry.owners.add(item.previewId || `row-${itemIndex}`);
+    entry.codes.add(item.code || item.sourceModel || item.model || `未填写行 ${itemIndex + 1}`);
   }));
   state.positionConflicts = [...positionOwners.values()]
-    .filter((entry) => entry.codes.size > 1)
-    .map((entry) => ({ position: entry.position, codes: [...entry.codes] }));
+    .filter((entry) => entry.owners.size > 1)
+    .map((entry) => ({ position: entry.position, codes: [...entry.codes], owners: [...entry.owners] }));
   const conflictKeys = new Set(state.positionConflicts.map((entry) => entry.position.toUpperCase()));
   items.forEach((item) => {
     item.conflictingPositions = item.positions.filter((position) => conflictKeys.has(position.toUpperCase()));
@@ -474,7 +665,7 @@ function readSourceMetadata(workbook, fileName = "") {
   const componentSheet = workbook.getWorksheet("元件清单");
   const title = componentSheet ? cellText(componentSheet.getCell("D1")) : "";
   const history = updateSheet ? readHistory(updateSheet) : [];
-  const detectedVersion = history[0]?.version || title.match(/V\d+(?:\.\d+)+/i)?.[0] || fileName.match(/V\d+(?:\.\d+)+/i)?.[0] || "";
+  const detectedVersion = history[0]?.version || title.match(/V\d+(?:\.\d+)+/i)?.[0] || extractFileVersion(fileName);
   const version = detectedVersion || "V1.0.0";
   const latest = history[0] || {};
   const headerApprovals = {
@@ -494,6 +685,35 @@ function readSourceMetadata(workbook, fileName = "") {
       approve: extractPerson(latest.approve || headerApprovals.approve, "批准"),
     },
   };
+}
+
+function readBomMetadata(fileName) {
+  const detectedVersion = extractFileVersion(fileName);
+  const detectedDate = extractFileDate(fileName);
+  return {
+    version: detectedVersion || "V1.0.0",
+    hasVersion: Boolean(detectedVersion),
+    nextVersion: detectedVersion || "V1.0.0",
+    date: detectedDate,
+    dateInput: detectedDate ? `${detectedDate.slice(0, 4)}-${detectedDate.slice(4, 6)}-${detectedDate.slice(6, 8)}` : "",
+    title: fileName.replace(/\.bom$/i, ""),
+    history: [],
+    names: { compile: "", review: "", approve: "" },
+  };
+}
+
+function extractFileVersion(fileName) {
+  const match = String(fileName || "").match(/V(\d+)[._](\d+)[._](\d+)/i);
+  return match ? `V${match[1]}.${match[2]}.${match[3]}` : "";
+}
+
+function extractFileDate(fileName) {
+  const text = String(fileName || "");
+  const compactMatches = [...text.matchAll(/(?:^|[_.-])(20\d{6})(?=$|[_.-])/g)];
+  if (compactMatches.length) return compactMatches.at(-1)[1];
+  const separatedMatches = [...text.matchAll(/(?:^|[_.-])(20\d{2})[_.-](0[1-9]|1[0-2])[_.-](0[1-9]|[12]\d|3[01])(?=$|[_.-])/g)];
+  const match = separatedMatches.at(-1);
+  return match ? `${match[1]}${match[2]}${match[3]}` : "";
 }
 
 function readHistory(sheet) {
@@ -546,6 +766,8 @@ function showFileCard(file, count, sheetName) {
 function resetSource() {
   state.sourceFile = null;
   state.sourceWorkbook = null;
+  state.sourceSheet = null;
+  state.sourceFormat = "";
   state.rawItems = [];
   state.items = [];
   state.sourceMeta = null;
@@ -553,6 +775,7 @@ function resetSource() {
   state.confirmedConflictSignature = "";
   state.previewBaseline = new Map();
   state.deletedPreviewIds = new Set();
+  state.deletedReasons = new Map();
   $("#source-file").value = "";
   $("#file-card").classList.add("hidden");
   $("#to-step-2").disabled = true;
@@ -566,8 +789,11 @@ function goToStep(step) {
     $("#compile-name").value = $("#compile-name").value || names.compile || "";
     $("#review-name").value = $("#review-name").value || names.review || "";
     $("#approve-name").value = $("#approve-name").value || names.approve || "";
+    if (state.sourceFormat === "bom" && state.sourceMeta.dateInput) $("#record-date").value = state.sourceMeta.dateInput;
     const versionMessage = state.sourceMeta.hasVersion
-      ? `已识别原版本 <strong>${escapeHtml(state.sourceMeta.version)}</strong>，本次将生成 <strong>${escapeHtml(state.sourceMeta.nextVersion)}</strong>`
+      ? state.sourceFormat === "bom"
+        ? `已识别 BOM 版本 <strong>${escapeHtml(state.sourceMeta.version)}</strong>，本次默认沿用该版本${state.sourceMeta.date ? `；日期沿用 <strong>${escapeHtml(state.sourceMeta.date)}</strong>` : ""}`
+        : `已识别原版本 <strong>${escapeHtml(state.sourceMeta.version)}</strong>，本次将生成 <strong>${escapeHtml(state.sourceMeta.nextVersion)}</strong>`
       : `未识别到版本号，本次将自动补充为 <strong>${escapeHtml(state.sourceMeta.nextVersion)}</strong>`;
     $("#detected-info").innerHTML = `${versionMessage}。<br>沿用人员：编制 ${escapeHtml(names.compile || "未填写")} · 审核 ${escapeHtml(names.review || "未填写")} · 批准 ${escapeHtml(names.approve || "未填写")}。`;
     renderMetadataChangeSummary();
@@ -581,6 +807,7 @@ async function preparePreview() {
   enrichItems();
   state.previewBaseline = new Map(state.items.map((item) => [item.previewId, previewComparable(item)]));
   state.deletedPreviewIds = new Set();
+  state.deletedReasons = new Map();
   renderPreview();
   goToStep(2);
   state.outputBuffer = null;
@@ -592,10 +819,10 @@ function renderPreview() {
   const confirmed = Boolean(conflictSignature() && state.confirmedConflictSignature === conflictSignature());
   const sortedItems = state.items.map((item, sourceIndex) => ({ item, sourceIndex })).sort((a, b) => issueRank(a.item) - issueRank(b.item) || a.sourceIndex - b.sourceIndex);
   $("#preview-body").innerHTML = sortedItems.map(({ item, sourceIndex }, displayIndex) => {
-    const isError = item.status === "format" || item.status === "missing";
+    const isError = isItemError(item);
     const editable = isPreviewItemEditable(item);
     const rowClass = [
-      isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
+      isError || item.classificationIssue ? "error-row" : item.conflictingPositions.length || (item.quantityMismatch && !item.quantityConfirmed) || (item.ncRequired && !item.ncDecision) || (item.precisionSuggestion && !item.precisionDecision) ? "warning-row" : "",
       item.userModified ? "modified-row" : "",
       editable ? "editing-row" : "",
       isThroughHoleComponent(item) ? "through-hole-row" : "",
@@ -608,9 +835,18 @@ function renderPreview() {
     const classification = editable
       ? `<select class="preview-select" data-field="classification">${classifications.map((value) => `<option value="${value}" ${value === item.classification ? "selected" : ""}>${value}</option>`).join("")}</select>${item.classification === "A类备选" ? `<select class="preview-select classification-link" data-field="linkedMainCode"><option value="">请选择关联主选</option>${mainItems.filter((main) => main !== item).map((main) => `<option value="${escapeHtml(main.code)}" ${main.code === item.linkedMainCode ? "selected" : ""}>${escapeHtml(main.code)} · ${escapeHtml(main.name || "未命名")}</option>`).join("")}</select>` : ""}`
       : `<span class="preview-readonly">${escapeHtml(item.classification)}</span>${item.classification === "A类备选" ? `<small class="relation-note">关联：${escapeHtml(item.linkedMainCode)}</small>` : ""}`;
+    const codeField = editable && item.matchCandidates?.length > 1 && !item.code
+      ? `<select class="preview-select" data-field="code"><option value="">请选择 12 位编码</option>${item.matchCandidates.map((code) => {
+          const material = state.materials.get(code);
+          return `<option value="${escapeHtml(code)}">${escapeHtml(code)} · ${escapeHtml(material?.name || "未命名")}</option>`;
+        }).join("")}</select>`
+      : field("code", item.code);
+    const useMaterialLineEntry = isError && item.status !== "model_ambiguous" && !item.bulkParsed;
+    const materialCells = useMaterialLineEntry
+      ? `<td colspan="4" class="material-lookup-cell"><div class="material-line-entry"><textarea data-material-line placeholder="12位编码  物料名称  规格型号  封装">${escapeHtml(item.bulkInput || "")}</textarea><button type="button" data-action="parse-material-line">识别物料</button></div></td>`
+      : `<td>${codeField}</td><td>${field("name", item.name, true)}</td><td>${field("model", item.model, true)}</td><td>${field("package", item.package, true)}</td>`;
     return `<tr class="${rowClass}" data-source-index="${sourceIndex}">
-      <td>${displayIndex + 1}</td><td>${classification}</td><td>${field("code", item.code)}</td>
-      <td>${field("name", item.name, true)}</td><td>${field("model", item.model, true)}</td><td>${field("package", item.package, true)}</td>
+      <td>${displayIndex + 1}</td><td>${classification}</td>${materialCells}
       <td><span class="preview-quantity">${item.quantity}</span></td><td>${field("positions", item.positions.join(","), true)}</td>
       <td class="status-cell">${statusMarkup(item)}</td><td class="operation-cell">${previewRowActions(item, editable)}</td></tr>`;
   }).join("");
@@ -620,10 +856,12 @@ function renderPreview() {
 
 function renderPreviewSummary() {
   const ok = state.items.filter((item) => item.status === "ok" || item.status === "manual").length;
-  const errors = state.items.filter((item) => item.status === "format" || item.status === "missing").length;
+  const errors = state.items.filter(isItemError).length;
   const conflictCount = state.positionConflicts.length;
   const relationCount = state.classificationIssues.length;
   const totalQuantity = state.items.reduce((sum, item) => sum + item.quantity, 0);
+  const ncPending = state.items.filter((item) => item.ncRequired && !item.ncDecision).length;
+  const precisionPending = state.items.filter((item) => item.precisionSuggestion && !item.precisionDecision).length;
   $("#summary-grid").innerHTML = [
     ["合并后物料", state.items.length, ""],
     ["数量合计", totalQuantity, ""],
@@ -634,8 +872,12 @@ function renderPreviewSummary() {
   ].map(([label, value, cls]) => `<div class="metric ${cls}"><small>${label}</small><strong>${value}</strong></div>`).join("");
   const messages = [];
   if (errors) messages.push(`有 ${errors} 项物料需要人工补充，导出时会以红色醒目标记。`);
+  const quantityMismatches = state.items.filter((item) => item.quantityMismatch);
+  if (quantityMismatches.length) messages.push(`有 ${quantityMismatches.length} 项原始 Quantity 与位号数量不一致，输出数量仍按位号重新计算。`);
   if (conflictCount) messages.push(`发现 ${conflictCount} 个跨编码位号冲突：${state.positionConflicts.map((entry) => `${entry.position}（${entry.codes.join(" / ")}）`).join("；")}。`);
   if (relationCount) messages.push(`有 ${relationCount} 个“A类备选”尚未关联“A类主选”。`);
+  if (ncPending) messages.push(`有 ${ncPending} 项带 NC 标记，请确认是空贴还是正常贴装。`);
+  if (precisionPending) messages.push(`有 ${precisionPending} 项存在同阻值、更高精度物料，请确认是否合并。`);
   if (!messages.length) messages.push("所有项目均已核对完成，可以进入编审批信息填写。");
   $("#notice").textContent = messages.join(" ");
   const allRowsConfirmed = conflictCount > 0 && conflictRowsConfirmed();
@@ -646,15 +888,32 @@ function statusMarkup(item) {
   const hasConflict = item.conflictingPositions.length > 0;
   const conflictConfirmed = hasConflict && item.confirmedConflictSignature === itemConflictSignature(item);
   const pendingModified = item.forceEdit && itemChangedFromInitial(item);
-  const status = item.status === "format" ? "! 编码格式错误" : item.status === "missing" ? "! 物料库未找到" : hasConflict && !conflictConfirmed ? "⚠ 位号冲突" : pendingModified ? "✎ 修改待确认" : item.userModified ? "✎ 用户已修改" : conflictConfirmed ? "✓ 冲突已确认" : item.status === "manual" ? "✎ 人工补全" : "✓ 已匹配";
-  const statusClass = item.status === "format" || item.status === "missing" ? "error" : pendingModified ? "pending" : item.userModified ? "modified" : hasConflict || item.status === "manual" ? "warning" : "";
-  const conflict = item.conflictingPositions.length ? `<span class="tag warning">位号冲突：${escapeHtml(item.conflictingPositions.join(", "))}</span>` : "";
+  const status = item.status === "model_ambiguous" ? "! 型号对应多个编码" : item.status === "model_missing" ? "! 规格型号未匹配" : item.status === "format" ? "! 编码格式错误" : item.status === "missing" ? "! 物料库未找到" : item.quantityMismatch && !item.quantityConfirmed ? "⚠ 数量待确认" : hasConflict && !conflictConfirmed ? "⚠ 位号冲突" : pendingModified ? "✎ 修改待确认" : item.userModified ? "✎ 用户已修改" : conflictConfirmed ? "✓ 冲突已确认" : item.status === "manual" ? "✎ 人工补全" : "✓ 已匹配";
+  const statusClass = isItemError(item) ? "error" : pendingModified ? "pending" : item.userModified ? "modified" : hasConflict || (item.quantityMismatch && !item.quantityConfirmed) || item.status === "manual" ? "warning" : "";
+  const conflict = item.conflictingPositions.length && !conflictConfirmed ? `<span class="tag warning">位号冲突：${escapeHtml(item.conflictingPositions.join(", "))}</span>` : "";
   const relation = item.classificationIssue ? `<span class="tag error">${item.classificationIssue}</span>` : "";
-  return `<span class="tag ${statusClass}">${status}</span> ${conflict} ${relation}`;
+  const quantity = item.quantityMismatch && !item.quantityConfirmed ? `<span class="tag warning">原数量 ${escapeHtml(item.sourceQuantity)} / 位号 ${item.quantity}</span>` : "";
+  const showSourceModel = item.sourceType === "bom" && (isItemError(item) || (item.bulkParsed && !item.bulkConfirmed));
+  const source = showSourceModel ? `<button type="button" class="tag warning source-ggxh" data-action="copy-source-model" title="点击复制待查询规格型号"><small>待查询 GGXH</small><strong>${escapeHtml(item.sourceModel)}</strong><em>点击复制</em></button>` : "";
+  const nc = item.ncRequired && !item.ncDecision
+    ? `<span class="tag warning">NC 待确认：是否空贴</span><span class="inline-decisions"><button type="button" data-action="nc-empty">空贴</button><button type="button" data-action="nc-place">正常贴装</button></span>`
+    : "";
+  const precision = item.precisionSuggestion
+    ? item.precisionDecision === "keep" ? ""
+      : `<span class="tag warning">有更高精度物料：${escapeHtml(item.precisionSuggestion.targetModel)}</span><span class="inline-decisions"><button type="button" data-action="merge-precision">合并到高精度</button><button type="button" data-action="keep-precision">分别保留</button></span>`
+    : "";
+  return `<span class="tag ${statusClass}">${status}</span> ${conflict} ${relation} ${quantity} ${source} ${nc} ${precision}`;
+}
+
+function isItemError(item) {
+  return ["format", "missing", "model_missing", "model_ambiguous"].includes(item.status);
 }
 
 function issueRank(item) {
-  if (item.status === "format" || item.status === "missing") return 0;
+  if (item.ncRequired && !item.ncDecision) return -1;
+  if (item.quantityMismatch && !item.quantityConfirmed) return 0;
+  if (item.precisionSuggestion && !item.precisionDecision) return 0;
+  if (isItemError(item)) return 0;
   if (item.conflictingPositions.length && item.confirmedConflictSignature !== itemConflictSignature(item)) return 0;
   if (item.forceEdit && itemChangedFromInitial(item) && item.classification !== "A类备选") return 0;
   if (item.userModified) return 2;
@@ -700,13 +959,13 @@ function applyPreviewEditsAndRecheck(rerender = true, notify = false) {
       const item = state.items[Number(row.dataset.sourceIndex)];
       row.querySelector(".preview-quantity").textContent = item.quantity;
       row.className = [
-        item.status === "format" || item.status === "missing" || item.classificationIssue ? "error-row" : item.conflictingPositions.length ? "warning-row" : "",
+        isItemError(item) || item.classificationIssue ? "error-row" : item.conflictingPositions.length || (item.quantityMismatch && !item.quantityConfirmed) || (item.ncRequired && !item.ncDecision) || (item.precisionSuggestion && !item.precisionDecision) ? "warning-row" : "",
         item.userModified ? "modified-row" : "",
         isPreviewItemEditable(item) ? "editing-row" : "",
         isThroughHoleComponent(item) ? "through-hole-row" : "",
         item.classification === "A类主选" ? "relation-main-row" : item.classification === "A类备选" ? "relation-backup-row" : "",
       ].filter(Boolean).join(" ");
-      const shouldBeReadOnly = !item.forceEdit && item.status !== "format" && item.status !== "missing" && !item.conflictingPositions.length && !item.classificationIssue;
+      const shouldBeReadOnly = !item.forceEdit && !isItemError(item) && !item.conflictingPositions.length && !item.classificationIssue;
       if (shouldBeReadOnly && row.querySelector("[data-field]")) makePreviewRowReadOnly(row, item);
       const cell = row.querySelector(".status-cell");
       cell.innerHTML = statusMarkup(item);
@@ -750,18 +1009,49 @@ function makePreviewRowReadOnly(row, item) {
 }
 
 function previewRowActions(item, editable) {
-  return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}" title="${editable ? "完成并确认本行修改" : "修改本行"}">修改</button><button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除</button></div>`;
+  const retry = item.bulkParsed && !item.bulkConfirmed ? `<button type="button" class="row-edit-button retry-material-button" data-action="retry-material-line">重新粘贴</button>` : "";
+  return `<div class="row-actions"><button type="button" class="row-edit-button copy-row-button" data-action="copy-row">复制</button><button type="button" class="row-edit-button" data-action="${editable ? "finish-row" : "edit-row"}" title="${editable ? "完成并确认本行修改" : "修改本行"}">${editable ? "确认" : "修改"}</button>${retry}<button type="button" class="row-edit-button delete-row-button" data-action="delete-row">删除</button></div>`;
+}
+
+function parseMaterialLine(value) {
+  const text = String(value || "").trim();
+  const codeMatch = text.match(/(?:^|\s)(\d{12})(?=\s|$)/);
+  if (!codeMatch) throw new Error("没有识别到12位编码");
+  const code = codeMatch[1];
+  const afterCode = text.slice((codeMatch.index || 0) + codeMatch[0].length).trim();
+  const tabParts = afterCode.split(/\t+/).map((part) => part.trim()).filter(Boolean);
+  let name;
+  let model;
+  let packageName;
+  if (tabParts.length >= 3) {
+    [name, ...model] = tabParts.slice(0, -1);
+    packageName = tabParts.at(-1);
+    model = model.join(" ");
+  } else {
+    const parts = afterCode.split(/\s+/).filter(Boolean);
+    if (parts.length < 3) throw new Error("请按“编码 名称 规格型号 封装”粘贴完整数据");
+    name = parts.shift();
+    packageName = parts.pop();
+    model = parts.join(" ");
+  }
+  if (!name || !model || !packageName) throw new Error("物料名称、规格型号或封装缺失");
+  return { code, name, model, package: packageName };
 }
 
 function isPreviewItemEditable(item) {
-  const isError = item.status === "format" || item.status === "missing";
+  const isError = isItemError(item);
   const conflictConfirmed = Boolean(item.conflictingPositions.length && item.confirmedConflictSignature === itemConflictSignature(item));
-  return Boolean(item.forceEdit || isError || (item.conflictingPositions.length && !conflictConfirmed) || item.classificationIssue);
+  return Boolean(item.forceEdit || isError || (item.quantityMismatch && !item.quantityConfirmed) || (item.conflictingPositions.length && !conflictConfirmed) || item.classificationIssue);
 }
 
 async function copyPreviewRow(row, item) {
   const currentValue = (field) => row.querySelector(`[data-field="${field}"]`)?.value.trim() ?? item[field] ?? "";
-  const text = [currentValue("code"), currentValue("name"), currentValue("model")].join("\t");
+  const text = [currentValue("code"), currentValue("name"), currentValue("model"), currentValue("package")].join("\t");
+  await writeClipboardText(text);
+  toast("已复制编码、物料名称、规格型号和封装。");
+}
+
+async function writeClipboardText(text) {
   try {
     await navigator.clipboard.writeText(text);
   } catch (_) {
@@ -774,7 +1064,6 @@ async function copyPreviewRow(row, item) {
     document.execCommand("copy");
     input.remove();
   }
-  toast("已复制编码、物料名称和规格型号。");
 }
 
 async function handlePreviewAction(event) {
@@ -783,6 +1072,67 @@ async function handlePreviewAction(event) {
   const row = button.closest("tr");
   const sourceIndex = Number(row.dataset.sourceIndex);
   const item = state.items[sourceIndex];
+  if (button.dataset.action === "copy-source-model") {
+    await writeClipboardText(item.sourceModel || item.model || "");
+    return toast(`已复制待查询 GGXH：${item.sourceModel || item.model || ""}`);
+  }
+  if (button.dataset.action === "parse-material-line") {
+    try {
+      const bulkInput = row.querySelector("[data-material-line]")?.value || "";
+      const record = parseMaterialLine(bulkInput);
+      Object.assign(item, record, { bulkInput, bulkParsed: true, bulkConfirmed: false, forceEdit: true });
+      validateItems(state.items);
+      state.outputBuffer = null;
+      renderPreview();
+      return toast("已识别物料并填入对应列，请核对后点击“确认”。");
+    } catch (error) {
+      return toast(error.message);
+    }
+  }
+  if (button.dataset.action === "retry-material-line") {
+    Object.assign(item, {
+      code: "", name: "", model: item.sourceModel || "", package: "",
+      matchCandidates: [], bulkParsed: false, bulkConfirmed: false, forceEdit: true,
+    });
+    validateItems(state.items);
+    state.outputBuffer = null;
+    renderPreview();
+    return toast("已退回整行粘贴模式，可修改后重新识别。");
+  }
+  if (button.dataset.action === "nc-empty") {
+    state.deletedPreviewIds.add(item.previewId);
+    state.deletedReasons.set(item.previewId, "用户确认 NC 物料空贴，已自动从输出中删除");
+    state.items = state.items.filter((candidate) => candidate !== item);
+    validateItems(state.items);
+    state.outputBuffer = null;
+    renderPreview();
+    return toast("已确认空贴，该物料已从输出中删除，并记入修改明细。");
+  }
+  if (button.dataset.action === "nc-place") {
+    item.ncDecision = "place";
+    item.userModified = true;
+    renderPreview();
+    return toast("已确认该物料正常贴装。");
+  }
+  if (button.dataset.action === "keep-precision") {
+    item.precisionDecision = "keep";
+    item.userModified = true;
+    renderPreview();
+    return toast("已确认分别保留两种精度的物料。");
+  }
+  if (button.dataset.action === "merge-precision") {
+    const targetId = item.precisionSuggestion?.targetPreviewId;
+    const target = state.items.find((candidate) => candidate.previewId === targetId);
+    if (!target) return toast("未找到对应的高精度物料，请重新检查。 ");
+    target.positions = [...new Set([...target.positions, ...item.positions])];
+    target.userModified = true;
+    state.deletedPreviewIds.add(item.previewId);
+    state.items = state.items.filter((candidate) => candidate !== item);
+    validateItems(state.items);
+    state.outputBuffer = null;
+    renderPreview();
+    return toast(`已合并到高精度物料 ${target.model || target.sourceModel}。`);
+  }
   if (button.dataset.action === "copy-row") return copyPreviewRow(row, item);
   if (button.dataset.action === "delete-row") {
     const previewId = item.previewId;
@@ -790,6 +1140,7 @@ async function handlePreviewAction(event) {
     applyPreviewEditsAndRecheck(false, false);
     state.items = state.items.filter((current) => current.previewId !== previewId);
     state.deletedPreviewIds.add(previewId);
+    state.deletedReasons.set(previewId, "用户手动删除该行");
     state.confirmedConflictSignature = "";
     validateItems(state.items);
     state.outputBuffer = null;
@@ -805,30 +1156,65 @@ async function handlePreviewAction(event) {
     const baseline = item.editBaseline || (original ? JSON.stringify(original) : editableSnapshot(item));
     applyPreviewEditsAndRecheck(false, false);
     const current = state.items[sourceIndex];
+    if (/^\d{12}$/.test(current.code) && current.name && current.model && current.package) {
+      const record = { code: current.code, name: current.name, model: current.model, package: current.package };
+      try {
+        await upsertIndexedMaterial(record);
+        current.status = "ok";
+        current.matchCandidates = [current.code];
+        current.bulkConfirmed = true;
+      } catch (error) {
+        console.error(error);
+        return toast("本行已填写，但追加到本地物料库失败，请重试确认。");
+      }
+    }
     current.forceEdit = false;
     const originalCurrent = state.previewBaseline.get(current.previewId);
     const initialSnapshot = originalCurrent ? JSON.stringify(originalCurrent) : baseline;
     current.userModified = editableSnapshot(current) !== initialSnapshot;
-    if (current.conflictingPositions.length) current.confirmedConflictSignature = itemConflictSignature(current);
+    if (current.conflictingPositions.length) {
+      current.confirmedConflictSignature = itemConflictSignature(current);
+      current.userModified = true;
+    }
+    if (current.quantityMismatch) {
+      current.quantityConfirmed = true;
+      current.userModified = true;
+    }
     delete current.editBaseline;
   }
   renderPreview();
 }
 
 function previewCanProceed() {
-  const errors = state.items.some((item) => item.status === "format" || item.status === "missing");
-  const conflictApproved = !state.positionConflicts.length || conflictRowsConfirmed() || state.confirmedConflictSignature === conflictSignature();
-  return !errors && !state.classificationIssues.length && conflictApproved;
+  return state.items.length > 0 && previewPendingItems().length === 0;
 }
 
-function updatePreviewNextButton() { $("#to-step-3").disabled = !previewCanProceed(); }
+function previewPendingItems() {
+  return state.items.filter((item) => {
+    if (isItemError(item) || item.forceEdit || item.classificationIssue) return true;
+    if (item.ncRequired && !item.ncDecision) return true;
+    if (item.quantityMismatch && !item.quantityConfirmed) return true;
+    if (item.precisionSuggestion && !item.precisionDecision) return true;
+    if (item.conflictingPositions.length && item.confirmedConflictSignature !== itemConflictSignature(item)) return true;
+    return item.status !== "ok" && !item.userModified;
+  });
+}
+
+function updatePreviewNextButton() {
+  const button = $("#to-step-3");
+  const blocked = !previewCanProceed();
+  button.disabled = false;
+  button.classList.toggle("is-blocked", blocked);
+  button.setAttribute("aria-disabled", String(blocked));
+  button.title = blocked ? "请先完成所有待确认项目" : "进入编审批信息填写";
+}
 function conflictSignature() {
-  return state.positionConflicts.map((entry) => `${entry.position.toUpperCase()}:${[...entry.codes].sort().join("|")}`).sort().join(";");
+  return state.positionConflicts.map((entry) => `${entry.position.toUpperCase()}:${[...(entry.owners || entry.codes)].sort().join("|")}`).sort().join(";");
 }
 function itemConflictSignature(item) {
   return (item.conflictingPositions || []).map((position) => {
     const conflict = state.positionConflicts.find((entry) => entry.position.toUpperCase() === position.toUpperCase());
-    return `${position.toUpperCase()}:${[...(conflict?.codes || [])].sort().join("|")}`;
+    return `${position.toUpperCase()}:${[...(conflict?.owners || conflict?.codes || [])].sort().join("|")}`;
   }).sort().join(";");
 }
 function conflictRowsConfirmed() {
@@ -850,6 +1236,8 @@ function previewComparable(item) {
     model: item.model || "",
     package: item.package || "",
     positions: [...(item.positions || [])],
+    ncDecision: item.ncDecision || "",
+    precisionDecision: item.precisionDecision || "",
   };
 }
 function renderMetadataChangeSummary() {
@@ -874,7 +1262,10 @@ function renderMetadataChangeSummary() {
     if (details.length) changes.push({ item, before, after, changedKeys, details });
   });
   state.previewBaseline.forEach((before, id) => {
-    if (!currentIds.has(id)) changes.push({ item: null, before, after: before, changedKeys: [], deleted: state.deletedPreviewIds.has(id), details: [state.deletedPreviewIds.has(id) ? "用户已删除该行" : "该行已合并到相同编码的物料中"] });
+    if (!currentIds.has(id)) {
+      const deleted = state.deletedPreviewIds.has(id);
+      changes.push({ item: null, before, after: before, changedKeys: [], deleted, details: [deleted ? (state.deletedReasons.get(id) || "用户已删除该行") : "该行已合并到相同编码的物料中"] });
+    }
   });
   const renderCell = (change, key) => {
     const changed = change.changedKeys.includes(key);
@@ -937,10 +1328,10 @@ async function buildOutputWorkbook() {
 
 function buildOutputBaseName() {
   const compactDate = dateCompact($("#record-date").value);
-  let baseName = (state.sourceFile?.name || "元件清单").replace(/\.(xlsx|xlsm)$/i, "");
+  let baseName = (state.sourceFile?.name || "元件清单").replace(/\.(bom|xlsx|xlsm)$/i, "");
   baseName = baseName.replace(/(?:_\d{8})+$/, "");
-  baseName = /V\d+(?:\.\d+)+/i.test(baseName)
-    ? baseName.replace(/V\d+(?:\.\d+)+/i, state.sourceMeta.nextVersion)
+  baseName = /V\d+(?:[._]\d+)+/i.test(baseName)
+    ? baseName.replace(/V\d+(?:[._]\d+)+/i, state.sourceMeta.nextVersion)
     : `${baseName}_${state.sourceMeta.nextVersion}`;
   return `${baseName}_${compactDate}`;
 }
@@ -978,14 +1369,18 @@ function updateComponentSheet(workbook) {
   }
   exportItems.forEach((item, index) => {
     const row = sheet.getRow(6 + index);
-    const rowNote = item.status === "ok" ? "" : item.status === "manual" ? "人工补全" : statusMessage(item.status);
+    const rowNote = [
+      item.status === "ok" ? "" : item.status === "manual" ? "人工补全" : statusMessage(item.status),
+      item.ncDecision === "empty" ? "NC：用户确认空贴" : item.ncDecision === "place" ? "NC：用户确认正常贴装" : "",
+      item.precisionDecision === "keep" ? "已确认与高精度物料分别保留" : "",
+    ].filter(Boolean).join("；");
     row.values = [exportSequences[index], item.classification, item.code, item.name, item.model, item.package, null, item.positions.join(","), "", rowNote];
     restoreRow(sheet, 6 + index, exemplar, false);
     setQuantityFormula(row, item.quantity);
     for (let column = 1; column <= 10; column += 1) {
       row.getCell(column).font = { ...(row.getCell(column).font || {}), size: 12 };
     }
-    if (item.status === "format" || item.status === "missing") {
+    if (isItemError(item)) {
       for (let column = 1; column <= 10; column += 1) {
         const cell = row.getCell(column);
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC7CE" } };
@@ -1112,7 +1507,7 @@ function componentCategory(item) {
   if (["Q", "VT"].includes(prefix) || /三极管|晶体管|MOS管|场效应管/i.test(text)) return 3;
   if (["D", "VD"].includes(prefix) || /二极管|整流管|稳压管|发光管|LED/i.test(text)) return 4;
   if (["U", "IC"].includes(prefix) || /芯片|集成电路|处理器|存储器|MCU|IC\b/i.test(text)) return 5;
-  if (["J", "CN", "P", "X"].includes(prefix) || /插座|连接器|卡座|接插件|端子座/.test(text)) return 6;
+  if (["J", "CN", "P", "X"].includes(prefix) || /插座|连接器|卡座|接插件|端子座/.test(text)) return 99;
   return 7;
 }
 
@@ -1239,6 +1634,8 @@ function restoreRow(sheet, rowNumber, snapshot, restoreHeight = true) {
 }
 
 function statusMessage(status) {
+  if (status === "model_ambiguous") return "未完成填写：规格型号对应多个12位编码";
+  if (status === "model_missing") return "未完成填写：规格型号在物料数据库中未匹配";
   return status === "format" ? "未完成填写：12位编码格式错误" : "未完成填写：物料数据库中未查到";
 }
 
