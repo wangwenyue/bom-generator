@@ -139,7 +139,7 @@ function bindFeedbackPrototype() {
     event.preventDefault();
     if (!event.currentTarget.checkValidity()) return event.currentTarget.reportValidity();
     if (!config.endpoint) return setFeedbackStatus("本地演示模式：尚未配置反馈服务，内容不会被发送。", "warning");
-    await submitFeedback(form, config);
+    await submitFeedback(form, config, close);
   });
   const connected = Boolean(config.endpoint && config.turnstileSiteKey);
   $("#feedback-channel-state").innerHTML = `<i></i> ${connected ? "安全通道 · 无需 GitHub 账号" : "本地演示模式 · 尚未连接 GitHub"}`;
@@ -192,7 +192,7 @@ function ensureFeedbackTurnstile(config) {
   document.head.appendChild(script);
 }
 
-async function submitFeedback(form, config) {
+async function submitFeedback(form, config, close) {
   const submitButton = $("#feedback-submit");
   const turnstileToken = window.turnstile && feedbackTurnstileWidget !== null
     ? window.turnstile.getResponse(feedbackTurnstileWidget) : "";
@@ -217,8 +217,14 @@ async function submitFeedback(form, config) {
     feedbackFiles = [];
     renderFeedbackFiles();
     setFeedbackStatus("", "");
-    setFeedbackSuccess(result);
-    toast(`反馈已提交：GitHub Issue #${result.issueNumber}`);
+    if (window.turnstile && feedbackTurnstileWidget !== null) window.turnstile.reset(feedbackTurnstileWidget);
+    close();
+    const issueNumber = Number(result.issueNumber) || "";
+    const issueUrl = /^https:\/\/github\.com\//.test(String(result.issueUrl || "")) ? result.issueUrl : "";
+    const issueLabel = issueUrl
+      ? `<a href="${escapeHtml(issueUrl)}" target="_blank" rel="noopener noreferrer">GitHub Issue #${issueNumber}</a>`
+      : `GitHub Issue #${issueNumber}`;
+    toast(`反馈提交成功：${issueLabel}`, { html: Boolean(issueUrl), duration: issueUrl ? 8000 : 4200 });
   } catch (error) {
     setFeedbackStatus(error.message || "反馈提交失败，请稍后重试。", "error");
     if (window.turnstile && feedbackTurnstileWidget !== null) window.turnstile.reset(feedbackTurnstileWidget);
@@ -244,16 +250,6 @@ function setFeedbackStatus(message, type) {
   const element = $("#feedback-status");
   element.textContent = message;
   element.className = `feedback-status${type ? ` ${type}` : ""}`;
-}
-
-function setFeedbackSuccess(result) {
-  const element = $("#feedback-status");
-  const issueNumber = Number(result.issueNumber) || "";
-  const issueUrl = /^https:\/\/github\.com\//.test(String(result.issueUrl || "")) ? result.issueUrl : "";
-  element.className = "feedback-status success";
-  element.innerHTML = issueUrl
-    ? `反馈已成功提交为 <a href="${escapeHtml(issueUrl)}" target="_blank" rel="noopener noreferrer">GitHub Issue #${issueNumber}</a>。`
-    : `反馈已成功提交为 GitHub Issue #${issueNumber}。`;
 }
 
 async function loadDefaultMaterials() {
@@ -1809,14 +1805,18 @@ function escapeHtml(value) {
 }
 
 let toastTimer;
-function toast(message) {
+function toast(message, { html = false, duration = 4200 } = {}) {
   const element = $("#toast");
-  element.textContent = message;
+  if (html) {
+    element.innerHTML = message;
+  } else {
+    element.textContent = message;
+  }
   const text = String(message);
   const type = /(失败|错误|超过|未找到|请先|请选择|没有可导出)/.test(text)
     ? "error"
     : /(取消|冲突|检查|确认)/.test(text) ? "warning" : "success";
   element.className = `toast ${type} show`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => element.classList.remove("show"), 4200);
+  toastTimer = setTimeout(() => element.classList.remove("show"), duration);
 }
