@@ -1,0 +1,22 @@
+name = "bom-generator-feedback"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+[[r2_buckets]]
+binding = "FEEDBACK_IMAGES"
+bucket_name = "bom-generator-feedback"
+
+[[kv_namespaces]]
+binding = "FEEDBACK_RATE_LIMIT"
+id = "2358c818cf8a423c8b581db57e5ba3b9"
+
+[vars]
+ALLOWED_ORIGIN = "https://wangwenyue.github.io"
+GITHUB_OWNER = "wangwenyue"
+GITHUB_REPO = "bom-generator"
+GITHUB_APP_ID = "4644767"
+GITHUB_APP_INSTALLATION_ID = "154830333"
+
+# 使用 wrangler secret put 分别设置：
+# GITHUB_APP_PRIVATE_KEY
+# TURNSTILE_SECRET

@@ -69,3 +69,35 @@ python3 -m http.server 8000
 ## 部署
 
 仓库包含 GitHub Pages Actions 工作流。在 GitHub 仓库设置中将 Pages 的 Source 选为 **GitHub Actions** 后，推送 `main` 分支即会自动部署。
+
+## 用户反馈功能
+
+页面右下角提供“问题反馈”入口。未配置服务端时会以本地演示模式运行，不会发送表单；配置完成后，用户无需 GitHub 账号即可提交文字和最多 3 张截图，由 Cloudflare Worker 创建 GitHub Issue。
+
+### Cloudflare 配置
+
+1. 在 Cloudflare 创建一个私有 R2 Standard Bucket、一个 KV Namespace 和一个 Turnstile Widget。
+2. 复制 `worker/wrangler.toml.example` 为 `worker/wrangler.toml`，填写 KV ID 和允许访问的 GitHub Pages Origin。R2 Bucket 保持私有，截图由 Worker 的随机地址代理读取。
+3. 创建一个 GitHub App，仅授予 `Issues: Read and write` 权限，并只安装到 `bom-generator` 仓库。把 App ID 和 Installation ID 填入 `worker/wrangler.toml`，把下载的 PKCS#8 私钥和 Turnstile Secret 保存为 Worker Secret：
+
+```bash
+cd worker
+npx wrangler secret put GITHUB_APP_PRIVATE_KEY
+npx wrangler secret put TURNSTILE_SECRET
+npx wrangler deploy
+```
+
+输入 `GITHUB_APP_PRIVATE_KEY` 时粘贴包含开头和结尾标记的完整私钥；Worker 同时兼容 GitHub 下载的 `RSA PRIVATE KEY` 和 PKCS#8 `PRIVATE KEY` 格式。Worker 会用它生成最长 10 分钟的 App JWT，再换取短期 Installation Token；创建的 Issue 作者显示为该 GitHub App 机器人，而不是个人账号。
+
+4. 将部署后的 Worker 地址和 Turnstile Site Key 填入根目录 `feedback-config.js`：
+
+```js
+window.FEEDBACK_CONFIG = Object.freeze({
+  endpoint: "https://你的-worker.workers.dev/",
+  turnstileSiteKey: "你的-site-key",
+});
+```
+
+5. 在 GitHub 仓库预先创建 `user-feedback` 标签。截图地址仍可从公开 Issue 访问，因此不要上传敏感业务信息；但 R2 Bucket 本身不开放公共访问。
+
+GitHub App 私钥和 Turnstile Secret 只能存放在 Worker Secret，禁止写入 `feedback-config.js`、`wrangler.toml` 或其他仓库文件。

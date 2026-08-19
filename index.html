@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="读取元件清单、查询物料库并生成标准 Excel 文件。">
   <title>元件清单自动生成</title>
-  <link rel="stylesheet" href="styles.css?v=20260817-4">
+  <link rel="stylesheet" href="styles.css?v=20260819-1">
   <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-  <script defer src="app.js?v=20260817-12"></script>
+  <script defer src="feedback-config.js?v=20260819-1"></script>
+  <script defer src="app.js?v=20260819-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -102,6 +103,34 @@
   </main>
 
   <footer><span class="version-tag">V1.0.0</span><span>文件仅在当前浏览器中处理，不会上传到服务器。</span><span class="designer-credit">Designed by Wenyue Wang</span></footer>
+  <button type="button" class="feedback-trigger" id="feedback-trigger" aria-haspopup="dialog" aria-controls="feedback-modal"><span class="feedback-trigger-icon" aria-hidden="true">?</span><span>问题反馈</span></button>
+  <div class="feedback-backdrop hidden" id="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+    <section class="feedback-modal-card">
+      <header class="feedback-modal-head">
+        <div class="feedback-head-mark" aria-hidden="true">!</div>
+        <div><small>USER FEEDBACK / 工单提交</small><h2 id="feedback-title">告诉我们遇到了什么问题</h2><p>你的反馈将生成 GitHub Issue，帮助我们持续改进工具。</p></div>
+        <button type="button" class="feedback-close" id="feedback-close" aria-label="关闭反馈窗口">×</button>
+      </header>
+      <form class="feedback-form" id="feedback-form">
+        <div class="feedback-fields">
+          <label><span>问题类型 <b>*</b></span><select id="feedback-type" required><option value="">请选择问题类型</option><option>功能异常</option><option>数据问题</option><option>使用建议</option><option>其他</option></select></label>
+          <label><span>联系方式 <em>选填</em></span><input type="text" id="feedback-contact" placeholder="邮箱 / 企业微信"></label>
+          <label class="feedback-wide"><span>问题标题 <b>*</b></span><input type="text" id="feedback-subject" maxlength="80" required placeholder="请用一句话概括你遇到的问题"></label>
+          <label class="feedback-wide"><span>问题描述 <b>*</b></span><textarea id="feedback-description" maxlength="2000" required placeholder="请描述发生了什么、你原本期望看到什么结果……"></textarea></label>
+          <label class="feedback-wide"><span>复现步骤 <em>选填</em></span><textarea class="feedback-steps" id="feedback-steps" maxlength="1200" placeholder="例如：1. 导入 BOM  2. 点击预览  3. 页面提示错误"></textarea></label>
+        </div>
+        <div class="feedback-upload">
+          <div class="feedback-upload-copy"><strong>附加截图</strong><span>支持 PNG / JPG / WEBP，最多 3 张，每张不超过 5 MB</span></div>
+          <label class="feedback-upload-button">＋ 添加截图<input type="file" id="feedback-files" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+        </div>
+        <div class="feedback-file-list" id="feedback-file-list" aria-live="polite"></div>
+        <div class="feedback-turnstile" id="feedback-turnstile"></div>
+        <p class="feedback-status" id="feedback-status" role="status" aria-live="polite"></p>
+        <div class="feedback-privacy"><span aria-hidden="true">i</span><p><strong>隐私提醒</strong> 请勿上传 BOM、物料库或包含敏感业务信息的截图。我们不会自动读取你在页面中处理的文件。</p></div>
+        <footer class="feedback-actions"><span id="feedback-channel-state"><i></i> 正在检查反馈通道…</span><div><button type="button" class="feedback-cancel" id="feedback-cancel">取消</button><button type="submit" class="feedback-submit" id="feedback-submit">提交反馈 <b>→</b></button></div></footer>
+      </form>
+    </section>
+  </div>
   <div class="modal-backdrop hidden" id="material-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="material-conflict-title">
     <section class="conflict-modal">
       <div class="conflict-modal-head"><span class="conflict-alert-icon" aria-hidden="true">!</span><div><small>DATABASE CONFLICT</small><h2 id="material-conflict-title">发现物料数据冲突</h2><p id="material-conflict-count"></p></div></div>
