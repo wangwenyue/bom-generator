@@ -20,6 +20,11 @@ const state = {
 
 const MATERIAL_DB_NAME = "bom-material-database";
 const MATERIAL_DB_VERSION = 1;
+const FEEDBACK_MAX_FILES = 3;
+const FEEDBACK_MAX_FILE_SIZE = 5 * 1024 * 1024;
+const FEEDBACK_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+let feedbackFiles = [];
+let feedbackTurnstileWidget = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -94,7 +99,161 @@ function bindEvents() {
     });
     renderPreview();
   });
+  bindFeedbackPrototype();
   updateMetadataSubmitState();
+}
+
+function bindFeedbackPrototype() {
+  const modal = $("#feedback-modal");
+  const openButton = $("#feedback-trigger");
+  const form = $("#feedback-form");
+  const config = window.FEEDBACK_CONFIG || {};
+  const close = () => {
+    modal.classList.add("hidden");
+    document.body.classList.remove("feedback-open");
+    openButton.focus();
+  };
+  const open = () => {
+    modal.classList.remove("hidden");
+    document.body.classList.add("feedback-open");
+    setTimeout(() => $("#feedback-type").focus(), 0);
+    ensureFeedbackTurnstile(config);
+  };
+  openButton.addEventListener("click", open);
+  $("#feedback-close").addEventListener("click", close);
+  $("#feedback-cancel").addEventListener("click", close);
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !modal.classList.contains("hidden")) close(); });
+  $("#feedback-files").addEventListener("change", (event) => {
+    addFeedbackFiles([...event.target.files]);
+    event.target.value = "";
+  });
+  $("#feedback-file-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-feedback-file]");
+    if (!button) return;
+    const index = Number(button.dataset.removeFeedbackFile);
+    feedbackFiles.splice(index, 1);
+    renderFeedbackFiles();
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!event.currentTarget.checkValidity()) return event.currentTarget.reportValidity();
+    if (!config.endpoint) return setFeedbackStatus("本地演示模式：尚未配置反馈服务，内容不会被发送。", "warning");
+    await submitFeedback(form, config);
+  });
+  const connected = Boolean(config.endpoint && config.turnstileSiteKey);
+  $("#feedback-channel-state").innerHTML = `<i></i> ${connected ? "安全通道 · 无需 GitHub 账号" : "本地演示模式 · 尚未连接 GitHub"}`;
+}
+
+function addFeedbackFiles(files) {
+  for (const file of files) {
+    if (feedbackFiles.length >= FEEDBACK_MAX_FILES) {
+      setFeedbackStatus(`最多只能上传 ${FEEDBACK_MAX_FILES} 张截图。`, "error");
+      break;
+    }
+    if (!FEEDBACK_IMAGE_TYPES.has(file.type)) {
+      setFeedbackStatus(`${file.name} 不是支持的图片格式。`, "error");
+      continue;
+    }
+    if (file.size > FEEDBACK_MAX_FILE_SIZE) {
+      setFeedbackStatus(`${file.name} 超过 5 MB。`, "error");
+      continue;
+    }
+    feedbackFiles.push(file);
+  }
+  renderFeedbackFiles();
+}
+
+function renderFeedbackFiles() {
+  const list = $("#feedback-file-list");
+  list.innerHTML = feedbackFiles.map((file, index) => `<article><div class="feedback-file-thumb"><span>IMG</span></div><div><strong>${escapeHtml(file.name)}</strong><small>${formatBytes(file.size)}</small></div><button type="button" data-remove-feedback-file="${index}" aria-label="移除 ${escapeHtml(file.name)}">×</button></article>`).join("");
+  $(".feedback-upload-copy span").textContent = feedbackFiles.length
+    ? `已选择 ${feedbackFiles.length} / ${FEEDBACK_MAX_FILES} 张截图`
+    : "支持 PNG / JPG / WEBP，最多 3 张，每张不超过 5 MB";
+}
+
+function ensureFeedbackTurnstile(config) {
+  if (!config.endpoint || !config.turnstileSiteKey || feedbackTurnstileWidget !== null) return;
+  const render = () => {
+    if (!window.turnstile || feedbackTurnstileWidget !== null) return;
+    feedbackTurnstileWidget = window.turnstile.render("#feedback-turnstile", {
+      sitekey: config.turnstileSiteKey,
+      theme: "light",
+      language: "zh-cn",
+    });
+  };
+  if (window.turnstile) return render();
+  const script = document.createElement("script");
+  script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+  script.async = true;
+  script.defer = true;
+  script.onload = render;
+  script.onerror = () => setFeedbackStatus("人机验证加载失败，请检查网络后重试。", "error");
+  document.head.appendChild(script);
+}
+
+async function submitFeedback(form, config) {
+  const submitButton = $("#feedback-submit");
+  const turnstileToken = window.turnstile && feedbackTurnstileWidget !== null
+    ? window.turnstile.getResponse(feedbackTurnstileWidget) : "";
+  if (!turnstileToken) return setFeedbackStatus("请先完成人机验证。", "error");
+  const payload = new FormData();
+  payload.append("type", $("#feedback-type").value);
+  payload.append("subject", $("#feedback-subject").value.trim());
+  payload.append("description", $("#feedback-description").value.trim());
+  payload.append("steps", $("#feedback-steps").value.trim());
+  payload.append("contact", $("#feedback-contact").value.trim());
+  payload.append("turnstileToken", turnstileToken);
+  payload.append("context", JSON.stringify(feedbackContext()));
+  feedbackFiles.forEach((file) => payload.append("attachments", file, file.name));
+  submitButton.disabled = true;
+  submitButton.innerHTML = "正在提交…";
+  setFeedbackStatus("正在安全上传反馈，请不要关闭窗口。", "pending");
+  try {
+    const response = await fetch(config.endpoint, { method: "POST", body: payload });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.message || "反馈提交失败，请稍后重试。");
+    form.reset();
+    feedbackFiles = [];
+    renderFeedbackFiles();
+    setFeedbackStatus("", "");
+    setFeedbackSuccess(result);
+    toast(`反馈已提交：GitHub Issue #${result.issueNumber}`);
+  } catch (error) {
+    setFeedbackStatus(error.message || "反馈提交失败，请稍后重试。", "error");
+    if (window.turnstile && feedbackTurnstileWidget !== null) window.turnstile.reset(feedbackTurnstileWidget);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.innerHTML = "提交反馈 <b>→</b>";
+  }
+}
+
+function feedbackContext() {
+  const activeStep = $(".step.active span")?.childNodes?.[0]?.textContent?.trim() || "未知";
+  return {
+    appVersion: $(".version-tag")?.textContent || "未知",
+    activeStep,
+    pageUrl: location.href.split("#")[0],
+    browser: navigator.userAgent,
+    viewport: `${window.innerWidth}×${window.innerHeight}`,
+    submittedAt: new Date().toISOString(),
+  };
+}
+
+function setFeedbackStatus(message, type) {
+  const element = $("#feedback-status");
+  element.textContent = message;
+  element.className = `feedback-status${type ? ` ${type}` : ""}`;
+}
+
+function setFeedbackSuccess(result) {
+  const element = $("#feedback-status");
+  const issueNumber = Number(result.issueNumber) || "";
+  const issueUrl = /^https:\/\/github\.com\//.test(String(result.issueUrl || "")) ? result.issueUrl : "";
+  element.className = "feedback-status success";
+  element.innerHTML = issueUrl
+    ? `反馈已成功提交为 <a href="${escapeHtml(issueUrl)}" target="_blank" rel="noopener noreferrer">GitHub Issue #${issueNumber}</a>。`
+    : `反馈已成功提交为 GitHub Issue #${issueNumber}。`;
 }
 
 async function loadDefaultMaterials() {

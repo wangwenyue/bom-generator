@@ -3,3 +3,13 @@ node_modules/
 dist/
 outputs/
 *.log
+
+# Cloudflare deployment state and local secrets
+worker/wrangler.toml
+worker/.dev.vars
+worker/.wrangler/
+
+# Local environment files
+.env
+.env.*
+!.env.example
