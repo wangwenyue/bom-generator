@@ -20,6 +20,7 @@ const state = {
 
 const MATERIAL_DB_NAME = "bom-material-database";
 const MATERIAL_DB_VERSION = 1;
+const MATERIAL_CODE_PATTERN = /^\d{12}(?:-\d+)?$/;
 const FEEDBACK_MAX_FILES = 3;
 const FEEDBACK_MAX_FILE_SIZE = 5 * 1024 * 1024;
 const FEEDBACK_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -292,7 +293,7 @@ async function setMaterials(records, persist = true, meta = null) {
 function normalizeMaterialRecords(records) {
   return records
     .map((record) => ({
-      code: String(record.code ?? recordField(record, ["12位编码", "物料编码", "物资编码", "编码"]) ?? "").trim(),
+      code: normalizeMaterialCode(record.code ?? recordField(record, ["12位编码", "物料编码", "物资编码", "编码"])),
       name: String(record.name ?? recordField(record, ["物料名称", "物资名称", "名称"]) ?? "").trim(),
       model: String(record.model ?? recordField(record, ["规格型号", "规格", "型号"]) ?? "").trim(),
       package: String(record.package ?? recordField(record, ["封装", "封装形式"]) ?? "").trim(),
@@ -662,7 +663,7 @@ function parseSourceWorkbook(workbook) {
 function readSourceRows(sheet, headerRow, headers) {
   const items = [];
   for (let row = headerRow + 1; row <= sheet.rowCount; row += 1) {
-    const code = cellText(sheet.getCell(row, headers.code)).replace(/\s/g, "");
+    const code = normalizeMaterialCode(cellText(sheet.getCell(row, headers.code)));
     const positionsText = cellText(sheet.getCell(row, headers.positions));
     const classification = headers.classification ? cellText(sheet.getCell(row, headers.classification)) : "";
     if (!code && !positionsText) continue;
@@ -676,6 +677,10 @@ function readSourceRows(sheet, headerRow, headers) {
 
 function splitPositions(value) {
   return [...new Set(String(value || "").split(/[,，;；\s]+/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function normalizeMaterialCode(value) {
+  return String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, "").replace(/[‐‑‒–—−]/g, "-");
 }
 
 function normalizeSpecification(value) {
@@ -748,8 +753,9 @@ function enrichItems() {
 
 function validateItems(items) {
   items.forEach((item) => {
+    item.code = normalizeMaterialCode(item.code);
     let material = state.materials.get(item.code);
-    let validFormat = /^\d{12}$/.test(item.code);
+    let validFormat = MATERIAL_CODE_PATTERN.test(item.code);
     if (item.sourceType === "bom" && !validFormat) {
       const candidates = findMaterialsByModel(item.model || item.sourceModel);
       item.matchCandidates = candidates.map((candidate) => candidate.code);
@@ -1084,7 +1090,7 @@ function applyPreviewEditsAndRecheck(rerender = true, notify = false) {
     const previous = state.items[sourceIndex];
     const value = (field, fallback = "") => row.querySelector(`[data-field="${field}"]`)?.value.trim() ?? fallback;
     if (!row.querySelector("[data-field]")) return;
-    const code = value("code").replace(/\s/g, "");
+    const code = normalizeMaterialCode(value("code"));
     const codeChanged = code !== previous.code;
     const preserveOrClear = (field) => {
       const editedValue = value(field);
@@ -1170,9 +1176,9 @@ function previewRowActions(item, editable) {
 
 function parseMaterialLine(value) {
   const text = String(value || "").trim();
-  const codeMatch = text.match(/(?:^|\s)(\d{12})(?=\s|$)/);
-  if (!codeMatch) throw new Error("没有识别到12位编码");
-  const code = codeMatch[1];
+  const codeMatch = text.match(/(?:^|\s)(\d{12}(?:[-‐‑‒–—−]\d+)?)(?=\s|$)/);
+  if (!codeMatch) throw new Error("没有识别到有效物料编码（12位数字，可带 -1、-2 等后缀）");
+  const code = normalizeMaterialCode(codeMatch[1]);
   const afterCode = text.slice((codeMatch.index || 0) + codeMatch[0].length).trim();
   const tabParts = afterCode.split(/\t+/).map((part) => part.trim()).filter(Boolean);
   let name;
@@ -1311,7 +1317,7 @@ async function handlePreviewAction(event) {
     const baseline = item.editBaseline || (original ? JSON.stringify(original) : editableSnapshot(item));
     applyPreviewEditsAndRecheck(false, false);
     const current = state.items[sourceIndex];
-    if (/^\d{12}$/.test(current.code) && current.name && current.model && current.package) {
+    if (MATERIAL_CODE_PATTERN.test(current.code) && current.name && current.model && current.package) {
       const record = { code: current.code, name: current.name, model: current.model, package: current.package };
       try {
         await upsertIndexedMaterial(record);
